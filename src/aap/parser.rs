@@ -199,16 +199,17 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
     }
 }
 
-/// Parses the ear detection payload bytes
+/// Parses the ear detection payload bytes according to AAP standard:
+/// 0x00 = InEar, 0x01 = OutOfEar, 0x02 = InCase, 0x03 = Disconnected
 pub fn parse_ear_detection_payload(payload: &[u8]) -> EarDetectionReport {
     let mut left_in = false;
     let mut right_in = false;
 
     if !payload.is_empty() {
-        left_in = payload[0] == 0x01;
+        left_in = payload[0] == 0x00;
     }
     if payload.len() >= 2 {
-        right_in = payload[1] == 0x01;
+        right_in = payload[1] == 0x00;
     }
 
     EarDetectionReport {
@@ -255,5 +256,23 @@ mod tests {
         assert_eq!(rep.right.as_ref().unwrap().level, 93);
         assert_eq!(rep.right.as_ref().unwrap().charging, false);
         assert_eq!(rep.case.as_ref().unwrap().level, 0);
+    }
+
+    #[test]
+    fn test_parse_ear_detection_payload() {
+        // Both in ear: 0x00, 0x00
+        let in_both = parse_ear_detection_payload(&[0x00, 0x00]);
+        assert_eq!(in_both.left_in_ear, true);
+        assert_eq!(in_both.right_in_ear, true);
+
+        // Left in ear, right out of ear: 0x00, 0x01
+        let left_only = parse_ear_detection_payload(&[0x00, 0x01]);
+        assert_eq!(left_only.left_in_ear, true);
+        assert_eq!(left_only.right_in_ear, false);
+
+        // Both out of ear / in case: 0x01, 0x02
+        let out_both = parse_ear_detection_payload(&[0x01, 0x02]);
+        assert_eq!(out_both.left_in_ear, false);
+        assert_eq!(out_both.right_in_ear, false);
     }
 }

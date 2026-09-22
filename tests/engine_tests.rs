@@ -36,11 +36,11 @@ fn test_mic_command_encoding() {
     assert_eq!(auto_cmd[6], aap::SUB_MIC_MODE);
     assert_eq!(auto_cmd[7], 0);
 
-    let left_cmd = commands::set_mic_mode(MicMode::Left);
-    assert_eq!(left_cmd[7], 1);
-
     let right_cmd = commands::set_mic_mode(MicMode::Right);
-    assert_eq!(right_cmd[7], 2);
+    assert_eq!(right_cmd[7], 1);
+
+    let left_cmd = commands::set_mic_mode(MicMode::Left);
+    assert_eq!(left_cmd[7], 2);
 }
 
 #[test]
@@ -88,8 +88,8 @@ fn test_single_battery_payload_parsing() {
 
 #[test]
 fn test_ear_detection_parsing() {
-    // Left in-ear (1), Right out-of-ear (0)
-    let payload = vec![1, 0];
+    // AAP Standard: Left in-ear (0x00), Right out-of-ear (0x01)
+    let payload = vec![0x00, 0x01];
     let report = parser::parse_ear_detection_payload(&payload);
     assert!(report.left_in_ear);
     assert!(!report.right_in_ear);

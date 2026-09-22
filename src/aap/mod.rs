@@ -33,7 +33,7 @@ pub const SUB_OWNS_CONNECTION: u8 = 0x06;
 pub const SUB_EAR_DETECTION: u8 = 0x0A;
 pub const SUB_ANC_MODE: u8 = 0x0D;
 pub const SUB_VOICE_TRIGGER_SIRI: u8 = 0x12;
-pub const SUB_ONE_BUD_ANC: u8 = 0x16;
+pub const SUB_ONE_BUD_ANC: u8 = 0x1B;
 pub const SUB_CHIME: u8 = 0x1E;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,24 +79,24 @@ impl AncMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MicMode {
     Auto = 0,
-    Left = 1,
-    Right = 2,
+    Right = 1,
+    Left = 2,
 }
 
 impl MicMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             MicMode::Auto => "auto",
-            MicMode::Left => "left",
             MicMode::Right => "right",
+            MicMode::Left => "left",
         }
     }
 
     pub fn from_str_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "auto" | "otomatik" => Some(MicMode::Auto),
-            "left" | "sol" => Some(MicMode::Left),
             "right" | "sag" => Some(MicMode::Right),
+            "left" | "sol" => Some(MicMode::Left),
             _ => None,
         }
     }

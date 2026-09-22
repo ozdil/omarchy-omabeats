@@ -21,34 +21,34 @@ pub const PROFILES: &[EqProfile] = &[
     EqProfile {
         name: "Beats Signature",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.0, gain: 4.5 },
-            EqBand { filter_type: "bq_peaking", freq: 250.0, q: 1.0, gain: 2.0 },
-            EqBand { filter_type: "bq_peaking", freq: 1000.0, q: 1.0, gain: -2.0 },
+            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.0, gain: 3.5 },
+            EqBand { filter_type: "bq_peaking", freq: 250.0, q: 1.0, gain: 1.5 },
+            EqBand { filter_type: "bq_peaking", freq: 1000.0, q: 1.0, gain: -1.5 },
             EqBand { filter_type: "bq_peaking", freq: 3000.0, q: 1.0, gain: 1.0 },
-            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 3.5 },
+            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 2.5 },
             EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 2.0 },
         ],
     },
     EqProfile {
         name: "Bass Boost",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.2, gain: 7.5 },
-            EqBand { filter_type: "bq_peaking", freq: 200.0, q: 1.0, gain: 4.0 },
-            EqBand { filter_type: "bq_peaking", freq: 800.0, q: 1.0, gain: -1.0 },
-            EqBand { filter_type: "bq_peaking", freq: 2500.0, q: 1.0, gain: 0.0 },
-            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 1.0 },
+            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.1, gain: 5.5 },
+            EqBand { filter_type: "bq_peaking", freq: 200.0, q: 1.0, gain: 2.5 },
+            EqBand { filter_type: "bq_peaking", freq: 800.0, q: 1.0, gain: -1.5 },
+            EqBand { filter_type: "bq_peaking", freq: 2500.0, q: 1.0, gain: -1.0 },
+            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: -0.5 },
             EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: -1.5 },
         ],
     },
     EqProfile {
         name: "Vocal Clarity",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 120.0, q: 0.9, gain: -3.0 },
-            EqBand { filter_type: "bq_peaking", freq: 300.0, q: 1.0, gain: -1.0 },
-            EqBand { filter_type: "bq_peaking", freq: 1200.0, q: 1.0, gain: 2.5 },
-            EqBand { filter_type: "bq_peaking", freq: 2500.0, q: 1.2, gain: 5.5 },
-            EqBand { filter_type: "bq_peaking", freq: 5000.0, q: 1.0, gain: 3.0 },
-            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 2.0 },
+            EqBand { filter_type: "bq_lowshelf", freq: 100.0, q: 0.9, gain: -3.0 },
+            EqBand { filter_type: "bq_peaking", freq: 300.0, q: 1.0, gain: -1.5 },
+            EqBand { filter_type: "bq_peaking", freq: 1200.0, q: 1.1, gain: 2.5 },
+            EqBand { filter_type: "bq_peaking", freq: 3000.0, q: 1.2, gain: 4.0 },
+            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 2.0 },
+            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 1.0 },
         ],
     },
     EqProfile {
@@ -100,6 +100,78 @@ pub fn stop_equalizer() {
         .status();
 }
 
+/// Dynamically locates the active Bluetooth Pulse/PipeWire sink for given MAC address
+pub fn get_bluetooth_sink_name(mac_opt: Option<&str>) -> Option<String> {
+    let output = Command::new("/usr/bin/pactl")
+        .args(["list", "short", "sinks"])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    if let Some(mac) = mac_opt {
+        let mac_clean = mac.replace(':', "_").to_lowercase();
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let name = parts[1];
+                if name.to_lowercase().contains(&mac_clean) {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: any bluez_output sink
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && parts[1].starts_with("bluez_output") {
+            return Some(parts[1].to_string());
+        }
+    }
+
+    None
+}
+
+/// Retrieves the current volume percentage of a sink (or default sink)
+pub fn get_sink_volume(sink_name: &str) -> Option<i32> {
+    let output = Command::new("/usr/bin/pactl")
+        .args(["get-sink-volume", sink_name])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for word in text.split_whitespace() {
+        if word.ends_with('%') {
+            if let Ok(val) = word.trim_end_matches('%').parse::<i32>() {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+/// Moves all active playing media streams (sink-inputs) to specified sink
+pub fn move_all_sink_inputs_to(target_sink: &str) {
+    if let Ok(output) = Command::new("/usr/bin/pactl")
+        .args(["list", "short", "sink-inputs"])
+        .stdin(Stdio::null())
+        .output()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            if let Some(id) = line.split_whitespace().next() {
+                let _ = Command::new("/usr/bin/pactl")
+                    .args(["move-sink-input", id, target_sink])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
 pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
     let profile = PROFILES
         .iter()
@@ -114,16 +186,25 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         })
         .unwrap_or(&PROFILES[3]); // Default to Flat
 
-    // If Flat, stop the filter chain to save CPU and route directly to device
+    let bt_sink = get_bluetooth_sink_name(mac);
+    let cur_vol = get_sink_volume("@DEFAULT_SINK@")
+        .or_else(|| bt_sink.as_deref().and_then(get_sink_volume))
+        .unwrap_or(60);
+
+    // If Flat, stop filter-chain and route streams directly to Bluetooth device
     if profile.name == "Flat" {
         stop_equalizer();
-        if let Some(m) = mac {
-            let sink = format!("bluez_output.{}.1", m.replace(':', "_"));
+        if let Some(ref sink) = bt_sink {
             let _ = Command::new("/usr/bin/pactl")
-                .args(["set-default-sink", &sink])
+                .args(["set-default-sink", sink])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
+                .status();
+            move_all_sink_inputs_to(sink);
+            let _ = Command::new("/usr/bin/pactl")
+                .args(["set-sink-volume", sink, &format!("{}%", cur_vol)])
+                .stdin(Stdio::null())
                 .status();
         }
         return true;
@@ -164,6 +245,12 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         nodes_json.push_str(&node_str);
     }
 
+    let target_obj_prop = if let Some(ref sink) = bt_sink {
+        format!("\n                target.object    = \"{}\"", sink)
+    } else {
+        String::new()
+    };
+
     let filter_conf = format!(
         r#"context.modules = [
     {{ name = libpipewire-module-filter-chain
@@ -190,14 +277,15 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
             }}
             playback.props = {{
                 node.name        = "omabeats_eq_out"
-                node.passive     = true
+                node.passive     = true{target_prop}
             }}
         }}
     }}
 ]
 "#,
         name = profile.name,
-        nodes = nodes_json
+        nodes = nodes_json,
+        target_prop = target_obj_prop
     );
 
     let conf_path = conf_d.join("omabeats-eq.conf");
@@ -217,17 +305,37 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         if let Some(child) = guard.take() {
             let pid = child.id();
             let _ = fs::write(get_pid_file(), pid.to_string());
-            // Leak child ownership to let it run persistently in background
             std::mem::forget(child);
         }
     }
 
-    // 4. Wait brief moment and set omabeats_eq as default sink
-    std::thread::sleep(Duration::from_millis(150));
+    // 4. Wait for omabeats_eq to appear in pactl sinks (up to 500ms)
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(output) = Command::new("/usr/bin/pactl").args(["list", "short", "sinks"]).output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if text.contains("omabeats_eq") {
+                break;
+            }
+        }
+    }
+
+    // 5. Synchronize volume BEFORE switching to prevent audio burst
+    let _ = Command::new("/usr/bin/pactl")
+        .args(["set-sink-volume", "omabeats_eq", &format!("{}%", cur_vol)])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    // 6. Set omabeats_eq as default sink
     let _ = Command::new("/usr/bin/pactl")
         .args(["set-default-sink", "omabeats_eq"])
         .stdin(Stdio::null())
         .status();
+
+    // 7. Seamlessly move active playback streams to omabeats_eq
+    move_all_sink_inputs_to("omabeats_eq");
 
     true
 }

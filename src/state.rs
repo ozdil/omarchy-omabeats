@@ -25,6 +25,8 @@ pub struct BeatsState {
     pub mic_mode: MicMode,
     pub one_bud_anc: bool,
     pub auto_pause_enabled: bool,
+    #[serde(default)]
+    pub paused_by_auto_pause: bool,
     pub conversational_awareness: bool,
     pub eq_profile: String,
     pub chime_active: Option<String>,
@@ -59,6 +61,7 @@ impl Default for BeatsState {
             mic_mode: MicMode::Auto,
             one_bud_anc: true,
             auto_pause_enabled: true,
+            paused_by_auto_pause: false,
             conversational_awareness: false,
             eq_profile: "Beats Signature".to_string(),
             chime_active: None,

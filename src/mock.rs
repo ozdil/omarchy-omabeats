@@ -45,6 +45,7 @@ pub fn create_mock_state(model_id_or_name: &str) -> BeatsState {
         mic_mode: MicMode::Auto,
         one_bud_anc: true,
         auto_pause_enabled: true,
+        paused_by_auto_pause: false,
         conversational_awareness: false,
         eq_profile: "Beats Signature".to_string(),
         chime_active: None,

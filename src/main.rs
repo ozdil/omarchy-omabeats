@@ -244,15 +244,26 @@ fn get_system_volume() -> i32 {
     50
 }
 
+fn apply_system_volume(val: i32, mac: Option<&str>) {
+    let _ = std::process::Command::new("/usr/bin/pactl")
+        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
+        .stdin(std::process::Stdio::null())
+        .status();
+    if let Some(sink) = equalizer::get_bluetooth_sink_name(mac) {
+        let _ = std::process::Command::new("/usr/bin/pactl")
+            .args(["set-sink-volume", &sink, &format!("{}%", val)])
+            .stdin(std::process::Stdio::null())
+            .status();
+    }
+}
+
 fn cmd_set_volume(val_str: &str) {
     let mut state = load_state().unwrap_or_default();
     let val = val_str.parse::<i32>().unwrap_or(state.volume).clamp(0, 100);
     state.volume = val;
 
-    let _ = std::process::Command::new("/usr/bin/pactl")
-        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
-        .stdin(std::process::Stdio::null())
-        .status();
+    let mac = if !state.mac.is_empty() { Some(state.mac.as_str()) } else { None };
+    apply_system_volume(val, mac);
 
     let _ = save_state(&state);
     println!("{{\"success\":true,\"volume\":{}}}", val);
@@ -450,7 +461,8 @@ fn cmd_chime(target: &str) {
         ];
 
         if let Some(sound_path) = paths.iter().find(|p| Path::new(p).exists()) {
-            let sink = format!("bluez_output.{}.1", state.mac.replace(':', "_"));
+            let sink = equalizer::get_bluetooth_sink_name(Some(&state.mac))
+                .unwrap_or_else(|| format!("bluez_output.{}.1", state.mac.replace(':', "_")));
             let _ = std::process::Command::new("/usr/bin/pw-play")
                 .args(["--target", &sink, sound_path])
                 .stdin(std::process::Stdio::null())
@@ -575,7 +587,7 @@ fn cmd_daemon() {
         }
     };
 
-    let active_conn: Arc<Mutex<Option<L2capConnection>>> = Arc::new(Mutex::new(None));
+    let active_conn: Arc<Mutex<Option<Arc<L2capConnection>>>> = Arc::new(Mutex::new(None));
     let active_mac: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
     // Thread 1: Unix Domain Socket Server for instant CLI commands
@@ -604,8 +616,11 @@ fn cmd_daemon() {
                                 if let Some(m) = AncMode::from_str_name(parts[1]) {
                                     let mut state = load_state().unwrap_or_default();
                                     state.anc_mode = m;
-                                    let guard = conn_for_socket.lock().unwrap();
-                                    if let Some(ref conn) = *guard {
+                                    let conn_opt = {
+                                        let guard = conn_for_socket.lock().unwrap();
+                                        guard.clone()
+                                    };
+                                    if let Some(ref conn) = conn_opt {
                                         let _ = conn.set_anc_mode(m);
                                     }
                                     let _ = save_state(&state);
@@ -637,10 +652,9 @@ fn cmd_daemon() {
                                 let mut state = load_state().unwrap_or_default();
                                 let val = parts[1].parse::<i32>().unwrap_or(state.volume).clamp(0, 100);
                                 state.volume = val;
-                                let _ = std::process::Command::new("/usr/bin/pactl")
-                                    .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
-                                    .stdin(std::process::Stdio::null())
-                                    .status();
+                                let mac_guard = mac_for_socket.lock().unwrap();
+                                let mac_opt = if !mac_guard.is_empty() { Some(mac_guard.as_str()) } else { None };
+                                apply_system_volume(val, mac_opt);
                                 let _ = save_state(&state);
                                 format!("{{\"success\":true,\"volume\":{}}}", val)
                             } else {
@@ -652,14 +666,38 @@ fn cmd_daemon() {
                                 let enable = parts[1].eq_ignore_ascii_case("true") || parts[1] == "1";
                                 let mut state = load_state().unwrap_or_default();
                                 state.auto_pause_enabled = enable;
-                                let guard = conn_for_socket.lock().unwrap();
-                                if let Some(ref conn) = *guard {
+                                let conn_opt = {
+                                    let guard = conn_for_socket.lock().unwrap();
+                                    guard.clone()
+                                };
+                                if let Some(ref conn) = conn_opt {
                                     let _ = conn.set_in_ear_detection(enable);
                                 }
                                 let _ = save_state(&state);
                                 format!("{{\"success\":true,\"auto_pause_enabled\":{}}}", enable)
                             } else {
                                 "{\"success\":false,\"error\":\"Missing argument\"}".to_string()
+                            }
+                        }
+                        "mic" => {
+                            if parts.len() >= 2 {
+                                if let Some(m) = MicMode::from_str_name(parts[1]) {
+                                    let mut state = load_state().unwrap_or_default();
+                                    state.mic_mode = m;
+                                    let conn_opt = {
+                                        let guard = conn_for_socket.lock().unwrap();
+                                        guard.clone()
+                                    };
+                                    if let Some(ref conn) = conn_opt {
+                                        let _ = conn.set_mic_mode(m);
+                                    }
+                                    let _ = save_state(&state);
+                                    format!("{{\"success\":true,\"mic_mode\":\"{}\"}}", m.as_str())
+                                } else {
+                                    format!("{{\"success\":false,\"error\":\"Invalid mic mode {}\"}}", parts[1])
+                                }
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing mic mode\"}".to_string()
                             }
                         }
                         "chime" => {
@@ -715,7 +753,7 @@ fn cmd_daemon() {
                         let _ = save_state(&state);
 
                         let mut guard = active_conn.lock().unwrap();
-                        *guard = Some(conn);
+                        *guard = Some(Arc::new(conn));
                     }
                     Err(_) => {
                         thread::sleep(Duration::from_millis(1500));
@@ -724,67 +762,98 @@ fn cmd_daemon() {
                 }
             }
 
-            // Read packets from active L2CAP connection
-            let packet_opt = {
+            // Read packets from active L2CAP connection using non-blocking poll (100ms timeout)
+            let conn_opt = {
                 let guard = active_conn.lock().unwrap();
-                if let Some(ref conn) = *guard {
-                    conn.read_packet().ok()
-                } else {
-                    None
-                }
+                guard.clone()
             };
 
-            if let Some(data) = packet_opt {
-                if let Some(event) = aap::parser::parse_packet(&data) {
-                    let mut state = load_state().unwrap_or_default();
-                    let prev_in_ear = state.in_ear_left && state.in_ear_right;
+            if let Some(ref conn) = conn_opt {
+                match conn.poll_read_packet(100) {
+                    Ok(Some(data)) => {
+                        if let Some(event) = aap::parser::parse_packet(&data) {
+                            let mut state = load_state().unwrap_or_default();
+                            let prev_left = state.in_ear_left;
+                            let prev_right = state.in_ear_right;
+                            let prev_count = (prev_left as usize) + (prev_right as usize);
 
-                    match event {
-                        aap::parser::ParsedAapEvent::Battery(rep) => {
-                            if let Some(l) = rep.left {
-                                state.battery_left = l.level;
-                                state.charging_left = l.charging;
-                            }
-                            if let Some(r) = rep.right {
-                                state.battery_right = r.level;
-                                state.charging_right = r.charging;
-                            }
-                            if let Some(c) = rep.case {
-                                state.battery_case = c.level;
-                                state.charging_case = c.charging;
-                            }
-                            if let Some(s) = rep.single {
-                                state.battery_single = s.level;
-                                state.charging_single = s.charging;
-                            }
-                        }
-                        aap::parser::ParsedAapEvent::AncMode(m) => {
-                            state.anc_mode = m;
-                        }
-                        aap::parser::ParsedAapEvent::EarDetection(ear) => {
-                            state.in_ear_left = ear.left_in_ear;
-                            state.in_ear_right = ear.right_in_ear;
-                            let new_in_ear = ear.left_in_ear && ear.right_in_ear;
-                            if state.auto_pause_enabled {
-                                if prev_in_ear && !new_in_ear {
-                                    mpris::pause_media();
-                                } else if !prev_in_ear && new_in_ear {
-                                    mpris::resume_media();
+                            match event {
+                                aap::parser::ParsedAapEvent::Battery(rep) => {
+                                    if let Some(l) = rep.left {
+                                        state.battery_left = l.level;
+                                        state.charging_left = l.charging;
+                                        if l.charging {
+                                            state.in_ear_left = false;
+                                        }
+                                    }
+                                    if let Some(r) = rep.right {
+                                        state.battery_right = r.level;
+                                        state.charging_right = r.charging;
+                                        if r.charging {
+                                            state.in_ear_right = false;
+                                        }
+                                    }
+                                    if let Some(c) = rep.case {
+                                        state.battery_case = c.level;
+                                        state.charging_case = c.charging;
+                                    }
+                                    if let Some(s) = rep.single {
+                                        state.battery_single = s.level;
+                                        state.charging_single = s.charging;
+                                    }
+
+                                    let curr_count = (state.in_ear_left as usize) + (state.in_ear_right as usize);
+                                    if state.auto_pause_enabled && prev_count > 0 && curr_count < prev_count {
+                                        mpris::pause_media();
+                                        state.paused_by_auto_pause = true;
+                                    }
                                 }
-                            }
-                        }
-                        _ => {}
-                    }
+                                aap::parser::ParsedAapEvent::AncMode(m) => {
+                                    state.anc_mode = m;
+                                }
+                                aap::parser::ParsedAapEvent::EarDetection(ear) => {
+                                    state.in_ear_left = ear.left_in_ear;
+                                    state.in_ear_right = ear.right_in_ear;
+                                    let curr_count = (state.in_ear_left as usize) + (state.in_ear_right as usize);
 
-                    state.last_updated = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let _ = save_state(&state);
+                                    if state.auto_pause_enabled {
+                                        if curr_count < prev_count && prev_count > 0 {
+                                            mpris::pause_media();
+                                            state.paused_by_auto_pause = true;
+                                        } else if curr_count > prev_count && state.paused_by_auto_pause {
+                                            mpris::resume_media();
+                                            state.paused_by_auto_pause = false;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+
+                            state.last_updated = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let _ = save_state(&state);
+                        }
+                    }
+                    Ok(None) => {
+                        // 100ms elapsed with no pending packet; loop again
+                    }
+                    Err(_) => {
+                        // Socket reset or remote disconnected
+                        let mut guard = active_conn.lock().unwrap();
+                        *guard = None;
+                        let mut mac_guard = active_mac.lock().unwrap();
+                        mac_guard.clear();
+                        let mut state = load_state().unwrap_or_default();
+                        state.connected = false;
+                        let _ = save_state(&state);
+                        thread::sleep(Duration::from_millis(1000));
+                    }
                 }
             }
         } else {
-            // Headset disconnected
+            // Headset disconnected in BlueZ
             {
                 let mut guard = active_conn.lock().unwrap();
                 if guard.is_some() {
