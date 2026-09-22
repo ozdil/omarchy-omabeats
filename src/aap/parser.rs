@@ -94,6 +94,15 @@ pub fn parse_packet(data: &[u8]) -> Option<ParsedAapEvent> {
             Some(ParsedAapEvent::RawNotification(cmd, payload.to_vec()))
         }
 
+        CMD_NOISE_CONTROL_STATUS => {
+            if !payload.is_empty() {
+                if let Some(mode) = AncMode::from_u8(payload[0]) {
+                    return Some(ParsedAapEvent::AncMode(mode));
+                }
+            }
+            Some(ParsedAapEvent::RawNotification(cmd, payload.to_vec()))
+        }
+
         CMD_CA_ACTIVITY => {
             if !payload.is_empty() {
                 let enabled = payload[0] == 0x01;
@@ -135,8 +144,9 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
             let level = payload[offset + 2];
             let status = payload[offset + 3];
             let charging = (status & 0x01) != 0;
+            let disconnected = (status & 0x04) != 0;
 
-            let entry = if level <= 100 {
+            let entry = if !disconnected && level <= 100 && (comp_id != 0x08 || level > 0) {
                 Some(BatteryEntry {
                     level: level as i32,
                     charging,
@@ -179,7 +189,8 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
 
         let case_lvl = payload[4];
         let case_chg = (payload[5] & 0x01) != 0;
-        if case_lvl <= 100 {
+        let case_disconn = (payload[5] & 0x04) != 0;
+        if !case_disconn && case_lvl <= 100 && case_lvl > 0 {
             case = Some(BatteryEntry {
                 level: case_lvl as i32,
                 charging: case_chg,
@@ -263,7 +274,14 @@ mod tests {
         assert_eq!(rep.left.as_ref().unwrap().charging, false);
         assert_eq!(rep.right.as_ref().unwrap().level, 93);
         assert_eq!(rep.right.as_ref().unwrap().charging, false);
-        assert_eq!(rep.case.as_ref().unwrap().level, 0);
+        // Case status 0x04 indicates disconnected (closed case); level should be None to preserve cached charge
+        assert!(rep.case.is_none());
+
+        // Test connected case (status 0x02, 94%):
+        let connected_case_payload = [0x01, 0x08, 0x01, 0x5e, 0x02, 0x01];
+        let rep_conn = parse_battery_payload(&connected_case_payload);
+        assert_eq!(rep_conn.case.as_ref().unwrap().level, 94);
+        assert_eq!(rep_conn.case.as_ref().unwrap().charging, false);
     }
 
     #[test]

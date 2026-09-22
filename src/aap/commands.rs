@@ -64,9 +64,3 @@ pub fn play_chime_command(target: &str) -> Vec<u8> {
     control_command(SUB_CHIME, val)
 }
 
-/// Builds packet to claim or release connection ownership
-pub fn set_owns_connection(enable: bool) -> Vec<u8> {
-    let val = if enable { 0x01 } else { 0x00 };
-    control_command(SUB_OWNS_CONNECTION, val)
-}
-

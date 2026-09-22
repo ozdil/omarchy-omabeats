@@ -376,7 +376,7 @@ Panel {
 
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.batteryCase > 0 ? (root.batteryCase + "%") : "--"
+                  text: root.batteryCase >= 0 ? (root.batteryCase + "%") : "--"
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
@@ -538,7 +538,8 @@ Panel {
                 iconText: modelData.icon
                 bordered: true
                 horizontalPadding: Style.space(6)
-                selected: root.ancMode === modelData.mode
+                selected: String(root.ancMode).toLowerCase().replace(/_/g, "") === String(modelData.cmd).toLowerCase() ||
+                          String(root.ancMode).toLowerCase().replace(/_/g, "") === String(modelData.mode).toLowerCase()
                 foreground: root.foreground
                 accent: root.accent
                 fontFamily: root.fontFamily

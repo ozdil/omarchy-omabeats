@@ -188,9 +188,8 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
 
     let bt_sink = get_bluetooth_sink_name(mac);
 
-    // If Flat, stop filter-chain and route streams directly to Bluetooth device
+    // If Flat, FIRST safely migrate streams to the Bluetooth sink, then stop filter-chain
     if profile.name == "Flat" {
-        stop_equalizer();
         if let Some(ref sink) = bt_sink {
             let cur_vol = get_sink_volume(sink)
                 .or_else(|| get_sink_volume("@DEFAULT_SINK@"))
@@ -206,7 +205,9 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
                 .args(["set-sink-volume", sink, &format!("{}%", cur_vol)])
                 .stdin(Stdio::null())
                 .status();
+            std::thread::sleep(Duration::from_millis(30));
         }
+        stop_equalizer();
         return true;
     }
 
@@ -223,6 +224,11 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
     let cur_vol = get_sink_volume(&target_sink)
         .or_else(|| get_sink_volume("@DEFAULT_SINK@"))
         .unwrap_or(50);
+
+    // CRITICAL: Move playing media streams to target_sink BEFORE stopping the old filter-chain!
+    // This prevents Spotify/players from receiving a broken pipe/kill signal and pausing playback.
+    move_all_sink_inputs_to(&target_sink);
+    std::thread::sleep(Duration::from_millis(30));
 
     stop_equalizer();
 

@@ -113,16 +113,8 @@ impl L2capConnection {
         self.send_raw(&commands::SUBSCRIBE_NOTIFICATIONS)?;
         std::thread::sleep(Duration::from_millis(50));
 
-        // 4. Claim Connection Ownership
-        self.send_raw(&commands::set_owns_connection(true))?;
-        std::thread::sleep(Duration::from_millis(30));
-
-        // 5. Enable One-Bud ANC so ANC works seamlessly
-        self.send_raw(&commands::set_one_bud_anc(true))?;
-        std::thread::sleep(Duration::from_millis(30));
-
-        // 6. Enable In-Ear Detection
-        self.send_raw(&commands::set_in_ear_detection(true))?;
+        // 4. Enable One-Bud ANC so ANC / Transparency works even with one bud
+        let _ = self.send_raw(&commands::set_one_bud_anc(true));
 
         Ok(())
     }
@@ -229,22 +221,16 @@ impl L2capConnection {
     }
 
     pub fn set_anc_mode(&self, mode: AncMode) -> io::Result<()> {
-        let _ = self.send_raw(&commands::set_owns_connection(true));
-        std::thread::sleep(Duration::from_millis(5));
         let packet = commands::set_anc_mode(mode);
         self.send_raw(&packet)
     }
 
     pub fn set_mic_mode(&self, mode: crate::aap::MicMode) -> io::Result<()> {
-        let _ = self.send_raw(&commands::set_owns_connection(true));
-        std::thread::sleep(Duration::from_millis(5));
         let packet = commands::set_mic_mode(mode);
         self.send_raw(&packet)
     }
 
     pub fn set_in_ear_detection(&self, enable: bool) -> io::Result<()> {
-        let _ = self.send_raw(&commands::set_owns_connection(true));
-        std::thread::sleep(Duration::from_millis(5));
         let packet = commands::set_in_ear_detection(enable);
         self.send_raw(&packet)
     }

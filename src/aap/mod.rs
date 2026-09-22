@@ -18,6 +18,7 @@ pub const HEADER: [u8; 4] = [0x04, 0x00, 0x04, 0x00];
 pub const CMD_BATTERY: u8 = 0x04;
 pub const CMD_EAR_DETECTION: u8 = 0x06;
 pub const CMD_CONTROL: u8 = 0x09;
+pub const CMD_NOISE_CONTROL_STATUS: u8 = 0x0D;
 pub const CMD_AUDIO_SOURCE: u8 = 0x0E;
 pub const CMD_NOTIFICATION_SUBSCRIBE: u8 = 0x0F;
 pub const CMD_HEAD_TRACKING: u8 = 0x17;
@@ -29,7 +30,6 @@ pub const CMD_CA_ACTIVITY: u8 = 0x4B;
 /// Control sub-commands (byte 6 of packet when cmd is CMD_CONTROL)
 pub const SUB_MIC_MODE: u8 = 0x01;
 pub const SUB_BUTTON_SEND_MODE: u8 = 0x05;
-pub const SUB_OWNS_CONNECTION: u8 = 0x06;
 pub const SUB_EAR_DETECTION: u8 = 0x0A;
 pub const SUB_ANC_MODE: u8 = 0x0D;
 pub const SUB_VOICE_TRIGGER_SIRI: u8 = 0x12;

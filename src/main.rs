@@ -310,6 +310,8 @@ fn perform_sync() -> BeatsState {
                                 if let Some(c) = rep.case {
                                     state.battery_case = c.level;
                                     state.charging_case = c.charging;
+                                } else {
+                                    state.charging_case = false;
                                 }
                                 if let Some(s) = rep.single {
                                     state.battery_single = s.level;
@@ -356,7 +358,10 @@ fn perform_sync() -> BeatsState {
                 state.model = dev.model.clone();
                 state.battery_left = -1;
                 state.battery_right = -1;
-                state.battery_case = -1;
+                if state.battery_case <= 0 {
+                    state.battery_case = -1;
+                }
+                state.charging_case = false;
                 state.battery_single = -1;
             }
         }
@@ -367,6 +372,7 @@ fn perform_sync() -> BeatsState {
             state.battery_left = -1;
             state.battery_right = -1;
             state.battery_case = -1;
+            state.charging_case = false;
             state.battery_single = -1;
         }
     }
@@ -873,6 +879,8 @@ fn cmd_daemon() {
                                     if let Some(c) = rep.case {
                                         state.battery_case = c.level;
                                         state.charging_case = c.charging;
+                                    } else {
+                                        state.charging_case = false;
                                     }
                                     if let Some(s) = rep.single {
                                         state.battery_single = s.level;
