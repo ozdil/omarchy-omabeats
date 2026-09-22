@@ -158,22 +158,22 @@ impl L2capConnection {
         }
     }
 
-    /// Drains any pending buffered packets from the socket
+    /// Drains any pending buffered packets from the socket immediately without blocking
     pub fn drain(&self) {
-        let timeout = libc::timeval {
-            tv_sec: 0,
-            tv_usec: 50_000,
-        };
-        unsafe {
-            libc::setsockopt(
-                self.fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVTIMEO,
-                &timeout as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-            );
+        let mut buf = vec![0u8; 1024];
+        loop {
+            let n = unsafe {
+                libc::recv(
+                    self.fd,
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                    libc::MSG_DONTWAIT,
+                )
+            };
+            if n <= 0 {
+                break;
+            }
         }
-        while self.read_packet().is_ok() {}
     }
 
     /// Reads all available AAP notification packets until socket timeout or max duration reached
@@ -218,6 +218,12 @@ impl L2capConnection {
 
     pub fn set_mic_mode(&self, mode: crate::aap::MicMode) -> io::Result<()> {
         let packet = commands::set_mic_mode(mode);
+        self.send_raw(&packet)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_in_ear_detection(&self, enable: bool) -> io::Result<()> {
+        let packet = commands::set_in_ear_detection(enable);
         self.send_raw(&packet)
     }
 

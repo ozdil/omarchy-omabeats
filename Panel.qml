@@ -143,7 +143,7 @@ Panel {
 
   Timer {
     id: pollTimer
-    interval: 3000
+    interval: 2000
     running: true
     repeat: true
     onTriggered: root.refresh()
@@ -509,12 +509,12 @@ Panel {
 
             readonly property var modes: {
               var list = [
-                { mode: "NoiseCancellation", label: "ANC", icon: "󰂚" },
-                { mode: "Off", label: "Off", icon: "󰂛" },
-                { mode: "Transparency", label: "Transparency", icon: "󰂚" }
+                { mode: "NoiseCancellation", cmd: "noise", label: "ANC", icon: "󰂚" },
+                { mode: "Off", cmd: "off", label: "Off", icon: "󰂛" },
+                { mode: "Transparency", cmd: "transparency", label: "Transparency", icon: "󰂚" }
               ]
               if (root.hasAdaptive) {
-                list.push({ mode: "Adaptive", label: "Adaptive", icon: "󰥒" })
+                list.push({ mode: "Adaptive", cmd: "adaptive", label: "Adaptive", icon: "󰥒" })
               }
               return list
             }
@@ -535,7 +535,7 @@ Panel {
                 fontSize: Style.font.caption
                 onClicked: {
                   root.ancMode = modelData.mode
-                  root.runEngineCommand(["anc", modelData.mode.toLowerCase()])
+                  root.runEngineCommand(["anc", modelData.cmd])
                 }
               }
             }

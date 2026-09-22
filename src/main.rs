@@ -1,5 +1,6 @@
 mod aap;
 mod bluez;
+mod equalizer;
 mod l2cap;
 mod mock;
 mod models;
@@ -13,6 +14,46 @@ use l2cap::L2capConnection;
 use mock::{apply_param_mutation, create_mock_state, load_state, save_state};
 use state::BeatsState;
 use std::env;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+fn get_socket_path() -> PathBuf {
+    let uid = unsafe { libc::getuid() };
+    let runtime_dir = format!("/run/user/{}", uid);
+    if Path::new(&runtime_dir).exists() {
+        PathBuf::from(runtime_dir).join("omabeats.sock")
+    } else {
+        PathBuf::from(format!("/tmp/omabeats_{}.sock", uid))
+    }
+}
+
+fn try_send_daemon_command(cmd_line: &str) -> Option<String> {
+    let path = get_socket_path();
+    if !path.exists() {
+        return None;
+    }
+
+    let mut stream = UnixStream::connect(path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(2000))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_millis(500))).ok()?;
+
+    stream.write_all(cmd_line.as_bytes()).ok()?;
+    stream.write_all(b"\n").ok()?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    if response.trim().is_empty() {
+        None
+    } else {
+        Some(response)
+    }
+}
 
 fn print_usage() {
     eprintln!(
@@ -22,17 +63,20 @@ KULLANIM:
     omabeats-engine <KOMUT> [ARGUMANLAR...]
 
 KOMUTLAR:
+    daemon                      Arka plan donanim ve olay dinleme servisini baslatir
     status                      Mevcut kulaklik durumunu JSON olarak dondurur
     sync                        BlueZ ve donanim durumunu tarayip durumu gunceller
     anc <MOD>                   ANC modunu ayarlar (off | noise | transparency | adaptive)
     mic <MOD>                   Mikrofon yonlendirmesini ayarlar (auto | left | right)
     eq <PROFIL>                 Ekolayzer profilini secer (Beats Signature | Bass Boost | Vocal Clarity | Flat)
+    volume <0-100>              Ses yuksekligini ayarlar
+    auto-pause <true|false>     Kulak ici otomatik duraklatmayi etkinlestirir / kapatir
     chime <sol|sag|ikisi|off>   Kayip kulakligi bulmak icin ses caldirir
     connect [MAC]               Beats kulakliga baglanir
     disconnect [MAC]            Kulaklik baglantisini keser
     toggle-pause                Medya oynatmayi duraklatir veya surdurur (MPRIS)
-    mock <MODEL>                Test/Simulator modunu baslatir (or: beats_fit_pro, beats_studio_pro, beats_solo_4)
-    set <PARAMETRE> <DEGER>     Test modunda parametre gunceller (or: bat_left 50, ear_left false)
+    mock <MODEL>                Test/Simulator modunu baslatir
+    set <PARAMETRE> <DEGER>     Test modunda parametre gunceller
     help                        Bu yardim iletisini gosterir
 "#
     );
@@ -46,6 +90,19 @@ fn main() {
     }
 
     let command = args[1].to_lowercase();
+
+    if command == "daemon" {
+        cmd_daemon();
+        return;
+    }
+
+    // Try communicating via background daemon for instant response
+    let full_cmd = args[1..].join(" ");
+    if let Some(response) = try_send_daemon_command(&full_cmd) {
+        print!("{}", response);
+        return;
+    }
+
     match command.as_str() {
         "status" => cmd_status(),
         "sync" => cmd_sync(),
@@ -108,6 +165,11 @@ fn main() {
             };
             let mut state = load_state().unwrap_or_default();
             state.auto_pause_enabled = enable;
+            if !state.mac.is_empty() {
+                if let Ok(conn) = L2capConnection::connect(&state.mac) {
+                    let _ = conn.set_in_ear_detection(enable);
+                }
+            }
             let _ = save_state(&state);
             println!("{{\"success\":true,\"auto_pause_enabled\":{}}}", enable);
         }
@@ -134,13 +196,13 @@ fn main() {
 }
 
 fn cmd_status() {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
     let state = match load_state() {
-        Some(s) if !s.test_mode && now.saturating_sub(s.last_updated) < 5 => s,
+        Some(s) if !s.test_mode && now.saturating_sub(s.last_updated) < 2 => s,
         _ => {
             let s = perform_sync();
             let _ = save_state(&s);
@@ -221,7 +283,7 @@ fn perform_sync() -> BeatsState {
 
             // Connect L2CAP and read incoming AAP notification stream
             if let Ok(conn) = L2capConnection::connect(&dev.mac) {
-                let packets = conn.read_all_notifications(std::time::Duration::from_millis(400));
+                let packets = conn.read_all_notifications(Duration::from_millis(250));
                 for data in packets {
                     if let Some(event) = aap::parser::parse_packet(&data) {
                         match event {
@@ -298,8 +360,8 @@ fn perform_sync() -> BeatsState {
         }
     }
 
-    state.last_updated = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    state.last_updated = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
@@ -322,7 +384,7 @@ fn cmd_set_anc(mode_str: &str) {
         if let Ok(conn) = L2capConnection::connect(&state.mac) {
             conn.drain();
             let _ = conn.set_anc_mode(mode);
-            let packets = conn.read_all_notifications(std::time::Duration::from_millis(200));
+            let packets = conn.read_all_notifications(Duration::from_millis(150));
             for data in packets {
                 if let Some(aap::parser::ParsedAapEvent::AncMode(m)) = aap::parser::parse_packet(&data) {
                     state.anc_mode = m;
@@ -361,37 +423,12 @@ fn cmd_set_eq(profile: &str) {
     let mut state = load_state().unwrap_or_default();
     state.eq_profile = profile.to_string();
 
-    match profile.to_lowercase().as_str() {
-        "bass boost" | "bas+" => {
-            let _ = std::process::Command::new("/usr/bin/pactl")
-                .args(["set-sink-volume", "@DEFAULT_SINK@", "+4%"])
-                .stdin(std::process::Stdio::null())
-                .status();
-        }
-        "vocal clarity" | "vokal" => {
-            let _ = std::process::Command::new("/usr/bin/pactl")
-                .args(["set-sink-volume", "@DEFAULT_SINK@", "-2%"])
-                .stdin(std::process::Stdio::null())
-                .status();
-        }
-        "flat" => {
-            let _ = std::process::Command::new("/usr/bin/pactl")
-                .args(["set-sink-volume", "@DEFAULT_SINK@", "50%"])
-                .stdin(std::process::Stdio::null())
-                .status();
-        }
-        "beats signature" | "imza" => {
-            let _ = std::process::Command::new("/usr/bin/pactl")
-                .args(["set-sink-volume", "@DEFAULT_SINK@", "65%"])
-                .stdin(std::process::Stdio::null())
-                .status();
-        }
-        _ => {}
-    }
+    let mac = if !state.mac.is_empty() { Some(state.mac.as_str()) } else { None };
+    let success = equalizer::apply_profile(profile, mac);
 
     state.volume = get_system_volume();
     let _ = save_state(&state);
-    println!("{{\"success\":true,\"eq_profile\":\"{}\",\"volume\":{}}}", profile, state.volume);
+    println!("{{\"success\":{},\"eq_profile\":\"{}\",\"volume\":{}}}", success, profile, state.volume);
 }
 
 fn cmd_chime(target: &str) {
@@ -412,7 +449,7 @@ fn cmd_chime(target: &str) {
             format!("/tmp/{}", wav_name),
         ];
 
-        if let Some(sound_path) = paths.iter().find(|p| std::path::Path::new(p).exists()) {
+        if let Some(sound_path) = paths.iter().find(|p| Path::new(p).exists()) {
             let sink = format!("bluez_output.{}.1", state.mac.replace(':', "_"));
             let _ = std::process::Command::new("/usr/bin/pw-play")
                 .args(["--target", &sink, sound_path])
@@ -428,16 +465,29 @@ fn cmd_chime(target: &str) {
 
 fn cmd_connect(mac_opt: Option<&str>) {
     let mut state = load_state().unwrap_or_default();
-    let mac = mac_opt.unwrap_or(&state.mac);
+    let target_mac = mac_opt
+        .map(|s| s.to_string())
+        .or_else(|| {
+            let devices = discover_beats_devices();
+            devices.first().map(|d| d.mac.clone())
+        })
+        .or_else(|| if !state.mac.is_empty() { Some(state.mac.clone()) } else { None });
 
-    match connect_device(mac) {
-        Ok(_) => {
-            state.connected = true;
-            let _ = save_state(&state);
-            println!("{{\"success\":true,\"connected\":true,\"mac\":\"{}\"}}", mac);
-        }
-        Err(e) => {
-            eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
+    match target_mac {
+        Some(mac) => match connect_device(&mac) {
+            Ok(_) => {
+                state.connected = true;
+                state.mac = mac.clone();
+                let _ = save_state(&state);
+                println!("{{\"success\":true,\"connected\":true,\"mac\":\"{}\"}}", mac);
+            }
+            Err(e) => {
+                eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
+                std::process::exit(1);
+            }
+        },
+        None => {
+            eprintln!("{{\"success\":false,\"error\":\"Baglanilacak cihaz bulunamadi\"}}");
             std::process::exit(1);
         }
     }
@@ -445,44 +495,308 @@ fn cmd_connect(mac_opt: Option<&str>) {
 
 fn cmd_disconnect(mac_opt: Option<&str>) {
     let mut state = load_state().unwrap_or_default();
-    let mac = mac_opt.unwrap_or(&state.mac);
+    let target_mac = mac_opt.map(|s| s.to_string()).or_else(|| {
+        if !state.mac.is_empty() {
+            Some(state.mac.clone())
+        } else {
+            let devices = discover_beats_devices();
+            devices.iter().find(|d| d.connected).map(|d| d.mac.clone())
+        }
+    });
 
-    match disconnect_device(mac) {
-        Ok(_) => {
+    match target_mac {
+        Some(mac) => match disconnect_device(&mac) {
+            Ok(_) => {
+                state.connected = false;
+                state.battery_left = -1;
+                state.battery_right = -1;
+                state.battery_case = -1;
+                state.battery_single = -1;
+                let _ = save_state(&state);
+                println!("{{\"success\":true,\"connected\":false}}");
+            }
+            Err(e) => {
+                eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
+                std::process::exit(1);
+            }
+        },
+        None => {
             state.connected = false;
             let _ = save_state(&state);
-            println!("{{\"success\":true,\"connected\":false,\"mac\":\"{}\"}}", mac);
-        }
-        Err(e) => {
-            eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
-            std::process::exit(1);
+            println!("{{\"success\":true,\"connected\":false}}");
         }
     }
 }
 
-fn cmd_mock(model_id: &str) {
-    let state = create_mock_state(model_id);
-    match save_state(&state) {
-        Ok(_) => {
-            println!("{{\"success\":true,\"mock_model\":\"{}\",\"connected\":true}}", state.model.display_name);
-        }
-        Err(e) => {
-            eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
-            std::process::exit(1);
-        }
+fn cmd_mock(model_name: &str) {
+    let mock_state = create_mock_state(model_name);
+    let _ = save_state(&mock_state);
+    if let Ok(json) = serde_json::to_string_pretty(&mock_state) {
+        println!("{}", json);
     }
 }
 
-fn cmd_set_param(key: &str, val: &str) {
+fn cmd_set_param(key: &str, value: &str) {
     let mut state = load_state().unwrap_or_default();
-    match apply_param_mutation(&mut state, key, val) {
-        Ok(_) => {
+    match apply_param_mutation(&mut state, key, value) {
+        Ok(()) => {
             let _ = save_state(&state);
-            println!("{{\"success\":true,\"key\":\"{}\",\"value\":\"{}\"}}", key, val);
+            if let Ok(json) = serde_json::to_string_pretty(&state) {
+                println!("{}", json);
+            }
         }
         Err(e) => {
             eprintln!("{{\"success\":false,\"error\":\"{}\"}}", e);
             std::process::exit(1);
+        }
+    }
+}
+
+/// OmaBeats background hardware listener & Unix Domain Socket Server
+fn cmd_daemon() {
+    let socket_path = get_socket_path();
+    if socket_path.exists() {
+        if UnixStream::connect(&socket_path).is_ok() {
+            eprintln!("OmaBeats daemon zaten calisiyor.");
+            return;
+        }
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    let listener = match UnixListener::bind(&socket_path) {
+        Ok(l) => {
+            // Set 0600 file permissions
+            let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600));
+            l
+        }
+        Err(e) => {
+            eprintln!("Daemon unix socket baglanamadi ({}): {}", socket_path.display(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let active_conn: Arc<Mutex<Option<L2capConnection>>> = Arc::new(Mutex::new(None));
+    let active_mac: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
+    // Thread 1: Unix Domain Socket Server for instant CLI commands
+    let conn_for_socket = Arc::clone(&active_conn);
+    let mac_for_socket = Arc::clone(&active_mac);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            if let Ok(mut s) = stream {
+                let mut reader = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() {
+                    let trimmed = line.trim();
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.is_empty() {
+                        continue;
+                    }
+
+                    let response = match parts[0].to_lowercase().as_str() {
+                        "status" => {
+                            let mut state = load_state().unwrap_or_default();
+                            state.volume = get_system_volume();
+                            serde_json::to_string(&state).unwrap_or_default()
+                        }
+                        "anc" => {
+                            if parts.len() >= 2 {
+                                if let Some(m) = AncMode::from_str_name(parts[1]) {
+                                    let mut state = load_state().unwrap_or_default();
+                                    state.anc_mode = m;
+                                    let guard = conn_for_socket.lock().unwrap();
+                                    if let Some(ref conn) = *guard {
+                                        let _ = conn.set_anc_mode(m);
+                                    }
+                                    let _ = save_state(&state);
+                                    format!("{{\"success\":true,\"anc_mode\":\"{}\"}}", m.as_str())
+                                } else {
+                                    format!("{{\"success\":false,\"error\":\"Invalid ANC mode {}\"}}", parts[1])
+                                }
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing ANC mode\"}".to_string()
+                            }
+                        }
+                        "eq" => {
+                            if parts.len() >= 2 {
+                                let prof = parts[1..].join(" ");
+                                let mut state = load_state().unwrap_or_default();
+                                state.eq_profile = prof.clone();
+                                let mac_guard = mac_for_socket.lock().unwrap();
+                                let mac_opt = if !mac_guard.is_empty() { Some(mac_guard.as_str()) } else { None };
+                                let success = equalizer::apply_profile(&prof, mac_opt);
+                                state.volume = get_system_volume();
+                                let _ = save_state(&state);
+                                format!("{{\"success\":{},\"eq_profile\":\"{}\",\"volume\":{}}}", success, prof, state.volume)
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing EQ profile\"}".to_string()
+                            }
+                        }
+                        "volume" => {
+                            if parts.len() >= 2 {
+                                let mut state = load_state().unwrap_or_default();
+                                let val = parts[1].parse::<i32>().unwrap_or(state.volume).clamp(0, 100);
+                                state.volume = val;
+                                let _ = std::process::Command::new("/usr/bin/pactl")
+                                    .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
+                                    .stdin(std::process::Stdio::null())
+                                    .status();
+                                let _ = save_state(&state);
+                                format!("{{\"success\":true,\"volume\":{}}}", val)
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing volume\"}".to_string()
+                            }
+                        }
+                        "auto-pause" => {
+                            if parts.len() >= 2 {
+                                let enable = parts[1].eq_ignore_ascii_case("true") || parts[1] == "1";
+                                let mut state = load_state().unwrap_or_default();
+                                state.auto_pause_enabled = enable;
+                                let guard = conn_for_socket.lock().unwrap();
+                                if let Some(ref conn) = *guard {
+                                    let _ = conn.set_in_ear_detection(enable);
+                                }
+                                let _ = save_state(&state);
+                                format!("{{\"success\":true,\"auto_pause_enabled\":{}}}", enable)
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing argument\"}".to_string()
+                            }
+                        }
+                        "chime" => {
+                            let target = if parts.len() >= 2 { parts[1] } else { "both" };
+                            cmd_chime(target);
+                            "{\"success\":true}".to_string()
+                        }
+                        "sync" => {
+                            let s = perform_sync();
+                            let _ = save_state(&s);
+                            serde_json::to_string(&s).unwrap_or_default()
+                        }
+                        _ => "{\"error\":\"Unknown daemon command\"}".to_string(),
+                    };
+
+                    let _ = s.write_all(response.as_bytes());
+                    let _ = s.write_all(b"\n");
+                }
+            }
+        }
+    });
+
+    // Thread 2 (Main Thread): Hardware L2CAP & In-Ear / Battery Event Monitoring Loop
+    loop {
+        let devices = discover_beats_devices();
+        let connected_dev = devices.iter().find(|d| d.connected);
+
+        if let Some(dev) = connected_dev {
+            let mut need_connect = false;
+            {
+                let mut mac_guard = active_mac.lock().unwrap();
+                if *mac_guard != dev.mac {
+                    *mac_guard = dev.mac.clone();
+                    need_connect = true;
+                }
+            }
+
+            {
+                let guard = active_conn.lock().unwrap();
+                if guard.is_none() {
+                    need_connect = true;
+                }
+            }
+
+            if need_connect {
+                match L2capConnection::connect(&dev.mac) {
+                    Ok(conn) => {
+                        let mut state = load_state().unwrap_or_default();
+                        state.connected = true;
+                        state.mac = dev.mac.clone();
+                        state.model = dev.model.clone();
+                        state.codec = detect_active_codec(&dev.mac);
+                        let _ = save_state(&state);
+
+                        let mut guard = active_conn.lock().unwrap();
+                        *guard = Some(conn);
+                    }
+                    Err(_) => {
+                        thread::sleep(Duration::from_millis(1500));
+                        continue;
+                    }
+                }
+            }
+
+            // Read packets from active L2CAP connection
+            let packet_opt = {
+                let guard = active_conn.lock().unwrap();
+                if let Some(ref conn) = *guard {
+                    conn.read_packet().ok()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(data) = packet_opt {
+                if let Some(event) = aap::parser::parse_packet(&data) {
+                    let mut state = load_state().unwrap_or_default();
+                    let prev_in_ear = state.in_ear_left && state.in_ear_right;
+
+                    match event {
+                        aap::parser::ParsedAapEvent::Battery(rep) => {
+                            if let Some(l) = rep.left {
+                                state.battery_left = l.level;
+                                state.charging_left = l.charging;
+                            }
+                            if let Some(r) = rep.right {
+                                state.battery_right = r.level;
+                                state.charging_right = r.charging;
+                            }
+                            if let Some(c) = rep.case {
+                                state.battery_case = c.level;
+                                state.charging_case = c.charging;
+                            }
+                            if let Some(s) = rep.single {
+                                state.battery_single = s.level;
+                                state.charging_single = s.charging;
+                            }
+                        }
+                        aap::parser::ParsedAapEvent::AncMode(m) => {
+                            state.anc_mode = m;
+                        }
+                        aap::parser::ParsedAapEvent::EarDetection(ear) => {
+                            state.in_ear_left = ear.left_in_ear;
+                            state.in_ear_right = ear.right_in_ear;
+                            let new_in_ear = ear.left_in_ear && ear.right_in_ear;
+                            if state.auto_pause_enabled {
+                                if prev_in_ear && !new_in_ear {
+                                    mpris::pause_media();
+                                } else if !prev_in_ear && new_in_ear {
+                                    mpris::resume_media();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    state.last_updated = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let _ = save_state(&state);
+                }
+            }
+        } else {
+            // Headset disconnected
+            {
+                let mut guard = active_conn.lock().unwrap();
+                if guard.is_some() {
+                    *guard = None;
+                    let mut mac_guard = active_mac.lock().unwrap();
+                    mac_guard.clear();
+                    let mut state = load_state().unwrap_or_default();
+                    state.connected = false;
+                    let _ = save_state(&state);
+                }
+            }
+            thread::sleep(Duration::from_millis(1500));
         }
     }
 }

@@ -65,9 +65,10 @@ impl AncMode {
     }
 
     pub fn from_str_name(name: &str) -> Option<Self> {
-        match name.to_lowercase().as_str() {
+        let clean = name.to_lowercase().replace(['_', '-', ' '], "");
+        match clean.as_str() {
             "off" | "kapali" => Some(AncMode::Off),
-            "anc" | "noise" | "noise_cancellation" | "gurultu" => Some(AncMode::NoiseCancellation),
+            "anc" | "noise" | "noisecancellation" | "cancellation" | "gurultu" => Some(AncMode::NoiseCancellation),
             "transparency" | "seffaf" | "ambient" => Some(AncMode::Transparency),
             "adaptive" | "uyumlu" => Some(AncMode::Adaptive),
             _ => None,
