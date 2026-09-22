@@ -1,0 +1,22 @@
+#!/bin/bash -p
+set -euo pipefail
+
+# Immediate rejection of loader injection
+if [ -n "${LD_PRELOAD:-}" ] || [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    echo "Security Error: Prohibited loader control variable detected" >&2
+    exit 1
+fi
+
+DIR="$(cd "$(/usr/bin/dirname "$(/usr/bin/realpath "${BASH_SOURCE[0]}")")" && /usr/bin/pwd)"
+ENGINE="${DIR}/omabeats-engine"
+
+if [[ ! -x "${ENGINE}" ]]; then
+    if [[ -x "${DIR}/target/release/omabeats-engine" ]]; then
+        ENGINE="${DIR}/target/release/omabeats-engine"
+    else
+        echo "Hata: omabeats-engine ikili dosyasi bulunamadi." >&2
+        exit 1
+    fi
+fi
+
+exec "${ENGINE}" "$@"

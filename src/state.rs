@@ -1,0 +1,74 @@
+use crate::aap::{AncMode, MicMode};
+use crate::models::DeviceModelInfo;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeatsState {
+    pub connected: bool,
+    pub test_mode: bool,
+    pub mac: String,
+    pub model: DeviceModelInfo,
+    pub codec: String,
+    pub rssi: i32,
+    pub battery_left: i32,
+    pub charging_left: bool,
+    pub battery_right: i32,
+    pub charging_right: bool,
+    pub battery_case: i32,
+    pub charging_case: bool,
+    pub battery_single: i32,
+    pub charging_single: bool,
+    pub in_ear_left: bool,
+    pub in_ear_right: bool,
+    pub anc_mode: AncMode,
+    pub mic_mode: MicMode,
+    pub one_bud_anc: bool,
+    pub auto_pause_enabled: bool,
+    pub conversational_awareness: bool,
+    pub eq_profile: String,
+    pub chime_active: Option<String>,
+    pub firmware_version: String,
+    pub serial_number: String,
+    pub last_updated: u64,
+}
+
+impl Default for BeatsState {
+    fn default() -> Self {
+        let model = crate::models::match_model("Beats Fit Pro", "bluetooth:v004Cp2012dD408");
+        BeatsState {
+            connected: true,
+            test_mode: false,
+            mac: "04:9D:05:DD:08:62".to_string(),
+            model,
+            codec: "AAC".to_string(),
+            rssi: -58,
+            battery_left: 85,
+            charging_left: false,
+            battery_right: 80,
+            charging_right: false,
+            battery_case: 95,
+            charging_case: true,
+            battery_single: -1,
+            charging_single: false,
+            in_ear_left: true,
+            in_ear_right: true,
+            anc_mode: AncMode::NoiseCancellation,
+            mic_mode: MicMode::Auto,
+            one_bud_anc: true,
+            auto_pause_enabled: true,
+            conversational_awareness: false,
+            eq_profile: "Beats Signature".to_string(),
+            chime_active: None,
+            firmware_version: "6F8".to_string(),
+            serial_number: "CC2G4000P3V9".to_string(),
+            last_updated: 0,
+        }
+    }
+}
+
+pub fn get_state_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    Path::new(&home)
+        .join(".local/state/omarchy/omabeats_state.json")
+}

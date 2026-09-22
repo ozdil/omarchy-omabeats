@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "ozdil.omabeats",
+  "name": "OmaBeats",
+  "version": "1.0.0",
+  "author": "Ozan Özdil (ozdil)",
+  "license": "MIT",
+  "description": "Comprehensive Apple Beats headphones control, battery monitor, and ANC manager for Omarchy Linux",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaBeats",
+    "description": "Full-featured Beats headphones management: ANC, Transparency, Tri-Battery, Ear Detection, Spatial Audio, and Presets.",
+    "category": "Media",
+    "defaultSection": "right",
+    "aliases": ["beats", "omabeats", "earbuds", "headphones", "anc", "airpods"],
+    "allowMultiple": false
+  }
+}
