@@ -27,15 +27,16 @@ Panel {
   property bool hasInEar: true
   property bool hasChime: true
 
-  property int batteryLeft: 85
+  property int batteryLeft: 95
   property bool chargingLeft: false
-  property int batteryRight: 80
+  property int batteryRight: 93
   property bool chargingRight: false
-  property int batteryCase: 95
-  property bool chargingCase: true
+  property int batteryCase: -1
+  property bool chargingCase: false
   property int batterySingle: -1
   property bool chargingSingle: false
 
+  property int volume: 70
   property bool inEarLeft: true
   property bool inEarRight: true
   property string ancMode: "NoiseCancellation"
@@ -43,7 +44,7 @@ Panel {
   property bool autoPauseEnabled: true
   property string eqProfile: "Beats Signature"
   property string codec: "AAC"
-  property int rssi: -54
+  property int rssi: -60
   property string mac: "04:9D:05:DD:08:62"
 
   // Unified Single-Color Theme Palette
@@ -68,7 +69,7 @@ Panel {
 
   function setEqProfile(name) {
     root.eqProfile = name
-    root.runEngineCommand(["set", "eq", name])
+    root.runEngineCommand(["eq", name])
   }
 
   function refresh() {
@@ -88,7 +89,7 @@ Panel {
           var d = JSON.parse(cleanText)
           root.connected = !!d.connected
           var m = d.model || {}
-          root.modelName = String(m.display_name || d.model_name || "Beats Kulaklik")
+          root.modelName = String(m.display_name || d.model_name || "Beats Headphones")
           root.modelId = String(m.model_id || d.model_id || "unknown")
           root.formFactor = String(m.form_factor || d.form_factor || "Earbuds")
           root.hasTriBattery = m.has_tri_battery !== undefined ? !!m.has_tri_battery : !!d.has_tri_battery
@@ -107,6 +108,8 @@ Panel {
           root.chargingCase = d.charging_case !== undefined ? !!d.charging_case : !!b.charging_case
           root.batterySingle = d.battery_single !== undefined ? Number(d.battery_single) : (b.single !== undefined ? Number(b.single) : -1)
           root.chargingSingle = d.charging_single !== undefined ? !!d.charging_single : !!b.charging_single
+
+          if (d.volume !== undefined) root.volume = Number(d.volume)
 
           var ie = d.in_ear || {}
           root.inEarLeft = d.in_ear_left !== undefined ? !!d.in_ear_left : !!ie.left
@@ -155,8 +158,8 @@ Panel {
     fontFamily: root.fontFamily
     foreground: bar ? bar.foreground : root.foreground
     tooltipText: root.connected
-                 ? ("OmaBeats: " + root.modelName + (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Bagli)"))
-                 : "OmaBeats: Beats Bagli Degil"
+                 ? ("OmaBeats: " + root.modelName + (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Connected)"))
+                 : "OmaBeats: Disconnected"
     onPressed: function(b) {
       if (root.opened) root.close()
       else root.open()
@@ -205,7 +208,7 @@ Panel {
               id: hero
               width: parent.width
               title: root.modelName
-              meta: root.connected ? ("BAGLI · " + root.codec + (root.rssi !== 0 ? (" · " + root.rssi + " dBm") : "")) : "BAGLANTI YOK"
+              meta: root.connected ? ("CONNECTED · " + root.codec + (root.rssi !== 0 ? (" · " + root.rssi + " dBm") : "")) : "NOT CONNECTED"
               foreground: root.foreground
               fontFamily: root.fontFamily
               iconComponent: Component {
@@ -218,7 +221,7 @@ Panel {
               }
               trailingControl: Component {
                 Button {
-                  text: root.connected ? "Kes" : "Baglan"
+                  text: root.connected ? "Disconnect" : "Connect"
                   iconText: root.connected ? "󰂲" : "󰂯"
                   bordered: true
                   foreground: root.foreground
@@ -226,8 +229,12 @@ Panel {
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
                   onClicked: {
-                    if (root.connected) root.runEngineCommand(["disconnect"])
-                    else root.runEngineCommand(["connect"])
+                    if (root.connected) {
+                      root.connected = false
+                      root.runEngineCommand(["disconnect"])
+                    } else {
+                      root.runEngineCommand(["connect"])
+                    }
                   }
                 }
               }
@@ -238,7 +245,7 @@ Panel {
           PanelSeparator { foreground: root.foreground }
 
           PanelSectionHeader {
-            text: "PIL DURUMU"
+            text: "BATTERY STATUS"
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
@@ -272,7 +279,7 @@ Panel {
                     anchors.verticalCenter: parent.verticalCenter
                   }
                   Text {
-                    text: "SOL"
+                    text: "LEFT"
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -315,7 +322,7 @@ Panel {
                     anchors.verticalCenter: parent.verticalCenter
                   }
                   Text {
-                    text: "SAG"
+                    text: "RIGHT"
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -358,7 +365,7 @@ Panel {
                     anchors.verticalCenter: parent.verticalCenter
                   }
                   Text {
-                    text: "KUTU"
+                    text: "CASE"
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -403,7 +410,7 @@ Panel {
               }
 
               Text {
-                text: "Kulaklik Pili"
+                text: "Headphone Battery"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -427,14 +434,69 @@ Panel {
             }
           }
 
-          // 3. Noise Cancellation (ANC Modes)
+          // 3. Volume Slider Section
+          PanelSeparator { foreground: root.foreground }
+
+          PanelSectionHeader {
+            text: "VOLUME"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          BorderSurface {
+            width: parent.width
+            implicitHeight: Style.space(52)
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+            radius: Style.cornerRadius
+            borderSpec: Border.flat(Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1)
+
+            Row {
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              spacing: Style.space(10)
+
+              Text {
+                text: root.volume === 0 ? "󰝟" : (root.volume < 50 ? "󰕿" : "󰕾")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Slider {
+                id: volSlider
+                width: parent.width - Style.space(90)
+                anchors.verticalCenter: parent.verticalCenter
+                from: 0
+                to: 100
+                stepSize: 1
+                value: root.volume
+                onMoved: {
+                  root.volume = Math.round(value)
+                  root.runEngineCommand(["volume", String(root.volume)])
+                }
+              }
+
+              Text {
+                text: root.volume + "%"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+
+          // 4. Noise Cancellation (ANC Modes)
           PanelSeparator {
             foreground: root.foreground
             visible: root.hasAnc
           }
 
           PanelSectionHeader {
-            text: "GURULTU DENETIMI"
+            text: "NOISE CONTROL"
             foreground: root.foreground
             fontFamily: root.fontFamily
             visible: root.hasAnc
@@ -448,11 +510,11 @@ Panel {
             readonly property var modes: {
               var list = [
                 { mode: "NoiseCancellation", label: "ANC", icon: "󰂚" },
-                { mode: "Off", label: "Kapali", icon: "󰂛" },
-                { mode: "Transparency", label: "Seffaf", icon: "󰂚" }
+                { mode: "Off", label: "Off", icon: "󰂛" },
+                { mode: "Transparency", label: "Transparency", icon: "󰂚" }
               ]
               if (root.hasAdaptive) {
-                list.push({ mode: "Adaptive", label: "Uyumlu", icon: "󰥒" })
+                list.push({ mode: "Adaptive", label: "Adaptive", icon: "󰥒" })
               }
               return list
             }
@@ -470,14 +532,16 @@ Panel {
                 foreground: root.foreground
                 accent: root.accent
                 fontFamily: root.fontFamily
+                fontSize: Style.font.caption
                 onClicked: {
                   root.ancMode = modelData.mode
                   root.runEngineCommand(["anc", modelData.mode.toLowerCase()])
                 }
+              }
             }
           }
 
-          // 4. In-Ear Detection & Auto-Pause Toggle
+          // 5. In-Ear Detection & Auto-Pause Toggle
           PanelSeparator {
             foreground: root.foreground
             visible: root.hasInEar
@@ -486,27 +550,27 @@ Panel {
           Toggle {
             width: parent.width
             visible: root.hasInEar
-            label: "Otomatik Duraklatma"
+            label: "Automatic Ear Detection"
             description: (root.inEarLeft && root.inEarRight)
-                         ? "Kulak ici algilama aktif (Her iki kulaklik kulakta)"
-                         : ((root.inEarLeft || root.inEarRight) ? "Kulak ici algilama aktif (Bir kulaklik kulakta)" : "Kulakliklar kulakta degil")
+                         ? "In-ear detection active (Both earbuds in ear)"
+                         : ((root.inEarLeft || root.inEarRight) ? "In-ear detection active (One earbud in ear)" : "Earbuds out of ear (Media paused)")
             checked: root.autoPauseEnabled
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
             onClicked: {
               root.autoPauseEnabled = !root.autoPauseEnabled
-              root.runEngineCommand(["set", "auto_pause", root.autoPauseEnabled ? "true" : "false"])
+              root.runEngineCommand(["auto-pause", root.autoPauseEnabled ? "true" : "false"])
             }
           }
 
-          // 5. Sound Profile / Equalizer
+          // 6. Sound Profile / Equalizer
           PanelSeparator {
             foreground: root.foreground
           }
 
           PanelSectionHeader {
-            text: "SES PROFILI (EKOLAYZER)"
+            text: "SOUND PROFILES (EQUALIZER)"
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
@@ -516,9 +580,9 @@ Panel {
             spacing: Style.space(6)
 
             readonly property var eqList: [
-              { id: "Beats Signature", label: "Imza" },
-              { id: "Bass Boost", label: "Bas+" },
-              { id: "Vocal Clarity", label: "Vokal" },
+              { id: "Beats Signature", label: "Signature" },
+              { id: "Bass Boost", label: "Bass+" },
+              { id: "Vocal Clarity", label: "Vocal" },
               { id: "Flat", label: "Flat" }
             ]
 
@@ -535,19 +599,22 @@ Panel {
                 accent: root.accent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
-                onClicked: root.setEqProfile(modelData.id)
+                onClicked: {
+                  root.eqProfile = modelData.id
+                  root.setEqProfile(modelData.id)
+                }
               }
             }
           }
 
-          // 6. Find My / Chime Actions
+          // 7. Find My / Chime Actions
           PanelSeparator {
             foreground: root.foreground
             visible: root.hasChime
           }
 
           PanelSectionHeader {
-            text: "KULAKLIKLARI BUL (SES CALDIR)"
+            text: "FIND MY EARBUDS (PLAY SOUND)"
             foreground: root.foreground
             fontFamily: root.fontFamily
             visible: root.hasChime
@@ -560,7 +627,7 @@ Panel {
 
             Button {
               width: Math.floor((parent.width - Style.space(8)) / 2)
-              text: "Sol Caldir"
+              text: "Ring Left"
               iconText: "󰂞"
               bordered: true
               foreground: root.foreground
@@ -572,7 +639,7 @@ Panel {
 
             Button {
               width: Math.floor((parent.width - Style.space(8)) / 2)
-              text: "Sag Caldir"
+              text: "Ring Right"
               iconText: "󰂞"
               bordered: true
               foreground: root.foreground
@@ -583,7 +650,7 @@ Panel {
             }
           }
 
-          // 7. Footer Info & Refresh
+          // 8. Footer Info & Refresh
           PanelSeparator {
             foreground: root.foreground
           }
@@ -610,7 +677,7 @@ Panel {
               id: refreshBtn
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: "Yenile"
+              text: "Refresh"
               iconText: "󰑐"
               bordered: true
               foreground: root.foreground

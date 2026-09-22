@@ -75,6 +75,13 @@ fn main() {
             let target = if args.len() >= 3 { &args[2] } else { "both" };
             cmd_chime(target);
         }
+        "volume" => {
+            if args.len() < 3 {
+                eprintln!("Hata: Ses duzeyi (0-100) belirtilmedi.");
+                std::process::exit(1);
+            }
+            cmd_set_volume(&args[2]);
+        }
         "connect" => {
             let mac = args.get(2).map(|s| s.as_str());
             cmd_connect(mac);
@@ -91,6 +98,18 @@ fn main() {
                 mpris::resume_media();
             }
             println!("{{\"success\":true}}");
+        }
+        "auto-pause" => {
+            let enable = if args.len() >= 3 {
+                args[2].eq_ignore_ascii_case("true") || args[2] == "1"
+            } else {
+                let s = load_state().unwrap_or_default();
+                !s.auto_pause_enabled
+            };
+            let mut state = load_state().unwrap_or_default();
+            state.auto_pause_enabled = enable;
+            let _ = save_state(&state);
+            println!("{{\"success\":true,\"auto_pause_enabled\":{}}}", enable);
         }
         "mock" => {
             let model = if args.len() >= 3 { &args[2] } else { "beats_fit_pro" };
@@ -143,8 +162,43 @@ fn cmd_sync() {
     }
 }
 
+fn get_system_volume() -> i32 {
+    let output = match std::process::Command::new("/usr/bin/pactl")
+        .args(["get-sink-volume", "@DEFAULT_SINK@"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Err(_) => return 50,
+    };
+
+    for part in output.split_whitespace() {
+        if part.ends_with('%') {
+            if let Ok(val) = part.trim_end_matches('%').parse::<i32>() {
+                return val.clamp(0, 100);
+            }
+        }
+    }
+    50
+}
+
+fn cmd_set_volume(val_str: &str) {
+    let mut state = load_state().unwrap_or_default();
+    let val = val_str.parse::<i32>().unwrap_or(state.volume).clamp(0, 100);
+    state.volume = val;
+
+    let _ = std::process::Command::new("/usr/bin/pactl")
+        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
+        .stdin(std::process::Stdio::null())
+        .status();
+
+    let _ = save_state(&state);
+    println!("{{\"success\":true,\"volume\":{}}}", val);
+}
+
 fn perform_sync() -> BeatsState {
     let mut state = load_state().unwrap_or_default();
+    let prev_in_ear = state.in_ear_left && state.in_ear_right;
 
     let devices = discover_beats_devices();
     if let Some(dev) = devices.iter().find(|d| d.connected).or_else(|| devices.first()) {
@@ -167,7 +221,7 @@ fn perform_sync() -> BeatsState {
 
             // Connect L2CAP and read incoming AAP notification stream
             if let Ok(conn) = L2capConnection::connect(&dev.mac) {
-                let packets = conn.read_all_notifications(std::time::Duration::from_millis(500));
+                let packets = conn.read_all_notifications(std::time::Duration::from_millis(400));
                 for data in packets {
                     if let Some(event) = aap::parser::parse_packet(&data) {
                         match event {
@@ -209,6 +263,18 @@ fn perform_sync() -> BeatsState {
                     }
                 }
             }
+
+            // In-Ear Auto-Pause detection
+            let new_in_ear = state.in_ear_left && state.in_ear_right;
+            if state.auto_pause_enabled {
+                if prev_in_ear && !new_in_ear {
+                    mpris::pause_media();
+                } else if !prev_in_ear && new_in_ear {
+                    mpris::resume_media();
+                }
+            }
+
+            state.volume = get_system_volume();
         } else {
             // Device paired in BlueZ but not currently connected
             if !state.test_mode {
@@ -294,8 +360,38 @@ fn cmd_set_mic(mode_str: &str) {
 fn cmd_set_eq(profile: &str) {
     let mut state = load_state().unwrap_or_default();
     state.eq_profile = profile.to_string();
+
+    match profile.to_lowercase().as_str() {
+        "bass boost" | "bas+" => {
+            let _ = std::process::Command::new("/usr/bin/pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "+4%"])
+                .stdin(std::process::Stdio::null())
+                .status();
+        }
+        "vocal clarity" | "vokal" => {
+            let _ = std::process::Command::new("/usr/bin/pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "-2%"])
+                .stdin(std::process::Stdio::null())
+                .status();
+        }
+        "flat" => {
+            let _ = std::process::Command::new("/usr/bin/pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "50%"])
+                .stdin(std::process::Stdio::null())
+                .status();
+        }
+        "beats signature" | "imza" => {
+            let _ = std::process::Command::new("/usr/bin/pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "65%"])
+                .stdin(std::process::Stdio::null())
+                .status();
+        }
+        _ => {}
+    }
+
+    state.volume = get_system_volume();
     let _ = save_state(&state);
-    println!("{{\"success\":true,\"eq_profile\":\"{}\"}}", profile);
+    println!("{{\"success\":true,\"eq_profile\":\"{}\",\"volume\":{}}}", profile, state.volume);
 }
 
 fn cmd_chime(target: &str) {
@@ -304,10 +400,26 @@ fn cmd_chime(target: &str) {
         state.chime_active = None;
     } else {
         state.chime_active = Some(target.to_string());
-        if !state.mac.is_empty() {
-            if let Ok(conn) = L2capConnection::connect(&state.mac) {
-                let _ = conn.play_chime(target);
-            }
+        let wav_name = match target.to_lowercase().as_str() {
+            "left" | "sol" => "chime_left.wav",
+            "right" | "sag" => "chime_right.wav",
+            _ => "chime_both.wav",
+        };
+
+        let paths = [
+            format!("/home/ozdil/.config/omarchy/plugins/ozdil.omabeats/resources/{}", wav_name),
+            format!("/home/ozdil/Projects/omarchy/omarchy-omabeats/resources/{}", wav_name),
+            format!("/tmp/{}", wav_name),
+        ];
+
+        if let Some(sound_path) = paths.iter().find(|p| std::path::Path::new(p).exists()) {
+            let sink = format!("bluez_output.{}.1", state.mac.replace(':', "_"));
+            let _ = std::process::Command::new("/usr/bin/pw-play")
+                .args(["--target", &sink, sound_path])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
         }
     }
     let _ = save_state(&state);

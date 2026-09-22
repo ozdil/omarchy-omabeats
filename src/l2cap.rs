@@ -108,15 +108,18 @@ impl L2capConnection {
     fn perform_handshake(&self) -> io::Result<()> {
         // 1. Send Handshake
         self.send_raw(&commands::HANDSHAKE)?;
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(30));
 
         // 2. Send Host Capabilities
         self.send_raw(&commands::SET_FEATURES)?;
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(30));
 
         // 3. Subscribe to Notifications
         self.send_raw(&commands::SUBSCRIBE_NOTIFICATIONS)?;
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(30));
+
+        // 4. Enable One-Bud ANC so ANC works seamlessly
+        let _ = self.send_raw(&commands::set_one_bud_anc(true));
 
         Ok(())
     }
@@ -207,6 +210,8 @@ impl L2capConnection {
     }
 
     pub fn set_anc_mode(&self, mode: AncMode) -> io::Result<()> {
+        let _ = self.send_raw(&commands::set_one_bud_anc(true));
+        std::thread::sleep(Duration::from_millis(20));
         let packet = commands::set_anc_mode(mode);
         self.send_raw(&packet)
     }
@@ -222,6 +227,7 @@ impl L2capConnection {
         self.send_raw(&packet)
     }
 
+    #[allow(dead_code)]
     pub fn play_chime(&self, target: &str) -> io::Result<()> {
         let packet = commands::play_chime_command(target);
         self.send_raw(&packet)

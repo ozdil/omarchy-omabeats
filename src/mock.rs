@@ -48,6 +48,8 @@ pub fn create_mock_state(model_id_or_name: &str) -> BeatsState {
         conversational_awareness: false,
         eq_profile: "Beats Signature".to_string(),
         chime_active: None,
+        volume: 65,
+        muted: false,
         firmware_version: "6F8".to_string(),
         serial_number: "CC2G4000P3V9".to_string(),
         last_updated: now,

@@ -149,6 +149,7 @@ pub fn validate_mac_address(mac: &str) -> bool {
 }
 
 /// Sanitizes input strings by stripping command characters.
+#[allow(dead_code)]
 pub fn sanitize_alphanumeric(input: &str, max_len: usize) -> String {
     input
         .chars()
