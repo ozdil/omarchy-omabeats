@@ -162,35 +162,107 @@ pub fn disable_ambient_passthrough() {
     }
 }
 
-/// Verifies that no rogue software loopback is running in the audio graph.
-/// Unloads any lingering loopback to prevent speaker feedback and buffer overflows.
+/// Verifies that any active loopback is still safely connected to a Bluetooth headphone.
+/// If headphone is disconnected, IMMEDIATELY unloads loopback to prevent speaker feedback!
 pub fn verify_passthrough_safety() {
     if find_existing_loopback_id().is_some() {
-        disable_ambient_passthrough();
+        match find_headphone_sink() {
+            Some(sink) if sink.starts_with("bluez_output") => {}
+            _ => {
+                disable_ambient_passthrough();
+            }
+        }
     }
 }
 
-/// For Beats headphones (Beats Fit Pro, Studio Pro, Solo Pro, etc.),
-/// Transparency mode is handled entirely by hardware DSP on the Apple H1 / Beats chip via AAP.
-/// Software microphone loopback from the laptop's internal mic is strictly prevented to avoid
-/// acoustic feedback loops, buffer overflows, and Bluetooth A2DP audio dropouts.
-pub fn set_ambient_passthrough(_level: u32) {
+/// Enables or updates low-latency ambient passthrough for Transparency Mode
+/// level: 51 - 100 (where 100 is max transparency: ambient voice boosted, media ducked to 50%)
+pub fn set_ambient_passthrough(level: u32) {
     let _guard = TRANSPARENCY_LOCK.lock().unwrap();
 
-    // Ensure any stray software loopback is cleaned up immediately
-    while let Some(lingering_id) = find_existing_loopback_id() {
-        let mut cmd = secure_pactl_cmd();
-        cmd.args(["unload-module", &lingering_id.to_string()]);
-        let _ = cmd.status();
+    if level <= 50 {
+        drop(_guard);
+        disable_ambient_passthrough();
+        return;
     }
 
-    // Ensure all media streams (Spotify, etc.) maintain 100% volume
+    // STRICT SAFETY CHECK: Bluetooth headphone sink MUST be present!
+    // NEVER fall back to @DEFAULT_SINK@ or laptop speakers!
+    let sink = match find_headphone_sink() {
+        Some(s) if s.starts_with("bluez_output") => s,
+        _ => {
+            drop(_guard);
+            disable_ambient_passthrough();
+            return;
+        }
+    };
+
+    let mic = match find_hardware_mic() {
+        Some(m) => m,
+        None => {
+            drop(_guard);
+            disable_ambient_passthrough();
+            return;
+        }
+    };
+
+    let mut current_id = LOOPBACK_MODULE_ID.load(Ordering::SeqCst);
+    if current_id == 0 {
+        if let Some(id) = find_existing_loopback_id() {
+            current_id = id;
+            LOOPBACK_MODULE_ID.store(id, Ordering::SeqCst);
+        }
+    }
+
+    if current_id == 0 {
+        let mut cmd = secure_pactl_cmd();
+        cmd.args([
+            "load-module",
+            "module-loopback",
+            "latency_msec=35",
+            "sink_dont_move=true",
+            "source_dont_move=true",
+            &format!("source={}", mic),
+            &format!("sink={}", sink),
+        ]);
+
+        if let Ok(out) = cmd.output() {
+            if out.status.success() {
+                let id_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if let Ok(id) = id_str.parse::<u32>() {
+                    LOOPBACK_MODULE_ID.store(id, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    // Ensure physical mic is unmuted and set to full volume
+    let mut mute_cmd = secure_pactl_cmd();
+    mute_cmd.args(["set-source-mute", &mic, "0"]);
+    let _ = mute_cmd.status();
+
+    let mut vol_cmd = secure_pactl_cmd();
+    vol_cmd.args(["set-source-volume", &mic, "100%"]);
+    let _ = vol_cmd.status();
+
+    // Calculate transparency factor: t in [0.0, 1.0] for level in [51, 100]
+    let t = ((level.saturating_sub(50)) as f32 / 50.0).clamp(0.0, 1.0);
+
+    // Loopback ambient voice volume: from 70% up to 110%
+    let loopback_vol = (70.0 + t * 40.0) as u32;
+
+    // Media stream volume ducking: from 100% down to 50% (-18 dB duck)
+    // Providing conversational awareness while playing media
+    let media_vol = (100.0 - t * 50.0) as u32;
+
     let inputs = get_sink_inputs();
     for (id, is_loopback) in inputs {
-        if !is_loopback {
-            let mut cmd = secure_pactl_cmd();
-            cmd.args(["set-sink-input-volume", &id.to_string(), "100%"]);
-            let _ = cmd.status();
+        let mut set_vol = secure_pactl_cmd();
+        if is_loopback {
+            set_vol.args(["set-sink-input-volume", &id.to_string(), &format!("{}%", loopback_vol)]);
+        } else {
+            set_vol.args(["set-sink-input-volume", &id.to_string(), &format!("{}%", media_vol)]);
         }
+        let _ = set_vol.status();
     }
 }
