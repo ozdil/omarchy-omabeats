@@ -40,6 +40,7 @@ Panel {
   property bool inEarLeft: true
   property bool inEarRight: true
   property string ancMode: "NoiseCancellation"
+  property int noiseLevel: 0
   property string micMode: "Auto"
   property bool autoPauseEnabled: true
   property string codec: "AAC"
@@ -110,6 +111,12 @@ Panel {
           root.inEarRight = d.in_ear_right !== undefined ? !!d.in_ear_right : !!ie.right
 
           if (d.anc_mode) root.ancMode = String(d.anc_mode)
+          if (d.noise_control_level !== undefined) {
+            root.noiseLevel = Number(d.noise_control_level)
+          } else {
+            var mLower = String(root.ancMode).toLowerCase()
+            root.noiseLevel = (mLower.indexOf("noise") !== -1 || mLower.indexOf("anc") !== -1) ? 0 : (mLower.indexOf("off") !== -1 ? 50 : 100)
+          }
           if (d.codec) root.codec = String(d.codec)
           if (d.rssi !== undefined) root.rssi = Number(d.rssi)
           if (d.mac) root.mac = String(d.mac)
@@ -504,42 +511,90 @@ Panel {
             visible: root.hasAnc
           }
 
-          Row {
+          Column {
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(8)
             visible: root.hasAnc
 
-            readonly property var modes: {
-              var list = [
-                { mode: "NoiseCancellation", cmd: "noise", label: "ANC", icon: "󰂚" },
-                { mode: "Off", cmd: "off", label: "Off", icon: "󰂛" },
-                { mode: "Transparency", cmd: "transparency", label: "Transparency", icon: "󰂚" }
-              ]
-              if (root.hasAdaptive) {
-                list.push({ mode: "Adaptive", cmd: "adaptive", label: "Adaptive", icon: "󰥒" })
+            Row {
+              width: parent.width
+              Text {
+                text: root.noiseLevel <= 30
+                      ? "ANC Active (Max Noise Cancellation)"
+                      : (root.noiseLevel <= 69
+                         ? "Off (Passive Isolation)"
+                         : ("Transparency (" + Math.round((root.noiseLevel - 50) * 2) + "% Ambient Passthrough)"))
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
               }
-              return list
+
+              Item { width: Style.space(6); height: 1 }
+
+              Text {
+                text: root.noiseLevel + "/100"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.fineprint
+                anchors.verticalCenter: parent.verticalCenter
+              }
             }
 
-            Repeater {
-              model: parent.modes
+            PanelSlider {
+              id: noiseSlider
+              width: parent.width
+              bar: root.bar
+              minimum: 0
+              maximum: 100
+              integer: true
+              step: 1
+              value: root.noiseLevel
+              trackColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+              fillColor: root.foreground
+              knobColor: root.foreground
+              onMoved: function(next) {
+                root.noiseLevel = Math.round(next)
+                root.runEngineCommand(["anc", String(root.noiseLevel)])
+              }
+              onReleased: function(next) {
+                root.noiseLevel = Math.round(next)
+                root.runEngineCommand(["anc", String(root.noiseLevel)])
+              }
+            }
 
-              delegate: Button {
-                required property var modelData
-                width: Math.floor((parent.width - (parent.modes.length - 1) * Style.space(6)) / parent.modes.length)
-                text: modelData.label
-                iconText: modelData.icon
-                bordered: true
-                horizontalPadding: Style.space(6)
-                selected: String(root.ancMode).toLowerCase().replace(/_/g, "") === String(modelData.cmd).toLowerCase() ||
-                          String(root.ancMode).toLowerCase().replace(/_/g, "") === String(modelData.mode).toLowerCase()
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: {
-                  root.ancMode = modelData.mode
-                  root.runEngineCommand(["anc", modelData.cmd])
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              readonly property var presets: [
+                { label: "ANC", level: 0, icon: "󰂚" },
+                { label: "Off", level: 50, icon: "󰂛" },
+                { label: "Transparency", level: 100, icon: "󰂚" }
+              ]
+
+              Repeater {
+                model: parent.presets
+
+                delegate: Button {
+                  required property var modelData
+                  width: Math.floor((parent.width - 2 * Style.space(6)) / 3)
+                  text: modelData.label
+                  iconText: modelData.icon
+                  bordered: true
+                  horizontalPadding: Style.space(4)
+                  selected: (modelData.level === 0 && root.noiseLevel <= 30) ||
+                            (modelData.level === 50 && root.noiseLevel > 30 && root.noiseLevel < 70) ||
+                            (modelData.level === 100 && root.noiseLevel >= 70)
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: {
+                    root.noiseLevel = modelData.level
+                    root.runEngineCommand(["anc", String(modelData.level)])
+                  }
                 }
               }
             }

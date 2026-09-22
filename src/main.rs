@@ -7,6 +7,7 @@ mod models;
 mod mpris;
 mod security;
 mod state;
+mod transparency;
 
 use aap::{AncMode, MicMode};
 use bluez::{connect_device, detect_active_codec, disconnect_device, discover_beats_devices};
@@ -385,17 +386,41 @@ fn perform_sync() -> BeatsState {
     state
 }
 
+fn resolve_anc_mode_and_level(input: &str) -> Option<(AncMode, i32)> {
+    let clean = input.trim().to_lowercase();
+    if let Ok(num) = clean.parse::<i32>() {
+        let level = num.clamp(0, 100);
+        let mode = if level <= 30 {
+            AncMode::NoiseCancellation
+        } else if level <= 69 {
+            AncMode::Off
+        } else {
+            AncMode::Transparency
+        };
+        return Some((mode, level));
+    }
+
+    match clean.as_str() {
+        "noise" | "anc" | "noisecancellation" | "cancellation" => Some((AncMode::NoiseCancellation, 0)),
+        "off" | "kapali" => Some((AncMode::Off, 50)),
+        "transparency" | "seffaf" | "ambient" => Some((AncMode::Transparency, 100)),
+        "adaptive" | "uyumlu" => Some((AncMode::Adaptive, 75)),
+        _ => None,
+    }
+}
+
 fn cmd_set_anc(mode_str: &str) {
-    let mode = match AncMode::from_str_name(mode_str) {
-        Some(m) => m,
+    let (mode, level) = match resolve_anc_mode_and_level(mode_str) {
+        Some(res) => res,
         None => {
-            eprintln!("Gecersiz ANC modu: {}. Gecerli modlar: off, noise, transparency, adaptive", mode_str);
+            eprintln!("Gecersiz ANC modu: {}. Gecerli modlar: 0-100, off, noise, transparency, adaptive", mode_str);
             std::process::exit(1);
         }
     };
 
     let mut state = load_state().unwrap_or_default();
     state.anc_mode = mode;
+    state.noise_control_level = level;
 
     if !state.mac.is_empty() {
         if let Ok(conn) = L2capConnection::connect(&state.mac) {
@@ -410,8 +435,15 @@ fn cmd_set_anc(mode_str: &str) {
         }
     }
 
+    if mode == AncMode::Transparency && level > 50 {
+        let gain = (((level - 50) as f32 * 2.0).clamp(20.0, 100.0)) as u32;
+        transparency::set_ambient_passthrough(gain);
+    } else {
+        transparency::disable_ambient_passthrough();
+    }
+
     let _ = save_state(&state);
-    println!("{{\"success\":true,\"anc_mode\":\"{}\"}}", state.anc_mode.as_str());
+    println!("{{\"success\":true,\"anc_mode\":\"{}\",\"noise_control_level\":{}}}", state.anc_mode.as_str(), state.noise_control_level);
 }
 
 fn cmd_set_mic(mode_str: &str) {
@@ -619,9 +651,10 @@ fn cmd_daemon() {
                         }
                         "anc" => {
                             if parts.len() >= 2 {
-                                if let Some(m) = AncMode::from_str_name(parts[1]) {
+                                if let Some((m, level)) = resolve_anc_mode_and_level(parts[1]) {
                                     let mut state = load_state().unwrap_or_default();
                                     state.anc_mode = m;
+                                    state.noise_control_level = level;
                                     let mut sent_ok = false;
                                     let conn_opt = {
                                         let mut guard = conn_for_socket.lock().unwrap();
@@ -658,8 +691,16 @@ fn cmd_daemon() {
                                             }
                                         }
                                     }
+
+                                    if m == AncMode::Transparency && level > 50 {
+                                        let gain = (((level - 50) as f32 * 2.0).clamp(20.0, 100.0)) as u32;
+                                        transparency::set_ambient_passthrough(gain);
+                                    } else {
+                                        transparency::disable_ambient_passthrough();
+                                    }
+
                                     let _ = save_state(&state);
-                                    format!("{{\"success\":true,\"anc_mode\":\"{}\"}}", m.as_str())
+                                    format!("{{\"success\":true,\"anc_mode\":\"{}\",\"noise_control_level\":{}}}", m.as_str(), level)
                                 } else {
                                     format!("{{\"success\":false,\"error\":\"Invalid ANC mode {}\"}}", parts[1])
                                 }
@@ -849,6 +890,7 @@ fn cmd_daemon() {
             if let Some(ref conn) = conn_opt {
                 match conn.poll_read_packet(100) {
                     Ok(Some(data)) => {
+                        eprintln!("[l2cap-recv] {:02x?}", data);
                         if let Some(event) = aap::parser::parse_packet(&data) {
                             let mut state = load_state().unwrap_or_default();
                             let prev_left = state.in_ear_left;

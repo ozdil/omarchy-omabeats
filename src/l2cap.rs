@@ -125,6 +125,7 @@ impl L2capConnection {
 
     pub fn send_raw(&self, data: &[u8]) -> io::Result<()> {
         let _guard = self.send_lock.lock().unwrap();
+        eprintln!("[l2cap-send] {:02x?}", data);
         let sent = unsafe {
             libc::send(
                 self.fd,
@@ -134,7 +135,9 @@ impl L2capConnection {
             )
         };
         if sent < 0 {
-            Err(io::Error::last_os_error())
+            let err = io::Error::last_os_error();
+            eprintln!("[l2cap-send-err] {}", err);
+            Err(err)
         } else {
             Ok(())
         }
