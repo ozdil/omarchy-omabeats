@@ -52,8 +52,8 @@ pub fn parse_packet(data: &[u8]) -> Option<ParsedAapEvent> {
         return Some(ParsedAapEvent::HandshakeAck);
     }
 
-    // Must have standard header [0x04, 0x00, 0x04, 0x00]
-    if data[0..4] != HEADER {
+    // Must have standard AAP framing header [0x04, 0x00]
+    if data[0] != 0x04 || data[1] != 0x00 {
         return None;
     }
 
@@ -87,9 +87,17 @@ pub fn parse_packet(data: &[u8]) -> Option<ParsedAapEvent> {
                         return Some(ParsedAapEvent::AncMode(mode));
                     }
                 } else if sub_cmd == SUB_EAR_DETECTION {
-                    let enabled = value == 0x01;
-                    return Some(ParsedAapEvent::ConversationalAwareness(enabled));
+                    let report = parse_ear_detection_payload(&payload[1..]);
+                    return Some(ParsedAapEvent::EarDetection(report));
                 }
+            }
+            Some(ParsedAapEvent::RawNotification(cmd, payload.to_vec()))
+        }
+
+        CMD_CA_ACTIVITY => {
+            if !payload.is_empty() {
+                let enabled = payload[0] == 0x01;
+                return Some(ParsedAapEvent::ConversationalAwareness(enabled));
             }
             Some(ParsedAapEvent::RawNotification(cmd, payload.to_vec()))
         }

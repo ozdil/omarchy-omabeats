@@ -617,7 +617,19 @@ fn cmd_daemon() {
                                     let mut state = load_state().unwrap_or_default();
                                     state.anc_mode = m;
                                     let conn_opt = {
-                                        let guard = conn_for_socket.lock().unwrap();
+                                        let mut guard = conn_for_socket.lock().unwrap();
+                                        if guard.is_none() {
+                                            let mac = if !state.mac.is_empty() {
+                                                state.mac.clone()
+                                            } else {
+                                                mac_for_socket.lock().unwrap().clone()
+                                            };
+                                            if !mac.is_empty() {
+                                                if let Ok(new_conn) = L2capConnection::connect(&mac) {
+                                                    *guard = Some(Arc::new(new_conn));
+                                                }
+                                            }
+                                        }
                                         guard.clone()
                                     };
                                     if let Some(ref conn) = conn_opt {
@@ -638,7 +650,13 @@ fn cmd_daemon() {
                                 let mut state = load_state().unwrap_or_default();
                                 state.eq_profile = prof.clone();
                                 let mac_guard = mac_for_socket.lock().unwrap();
-                                let mac_opt = if !mac_guard.is_empty() { Some(mac_guard.as_str()) } else { None };
+                                let mac_opt = if !mac_guard.is_empty() {
+                                    Some(mac_guard.as_str())
+                                } else if !state.mac.is_empty() {
+                                    Some(state.mac.as_str())
+                                } else {
+                                    None
+                                };
                                 let success = equalizer::apply_profile(&prof, mac_opt);
                                 state.volume = get_system_volume();
                                 let _ = save_state(&state);
@@ -653,7 +671,13 @@ fn cmd_daemon() {
                                 let val = parts[1].parse::<i32>().unwrap_or(state.volume).clamp(0, 100);
                                 state.volume = val;
                                 let mac_guard = mac_for_socket.lock().unwrap();
-                                let mac_opt = if !mac_guard.is_empty() { Some(mac_guard.as_str()) } else { None };
+                                let mac_opt = if !mac_guard.is_empty() {
+                                    Some(mac_guard.as_str())
+                                } else if !state.mac.is_empty() {
+                                    Some(state.mac.as_str())
+                                } else {
+                                    None
+                                };
                                 apply_system_volume(val, mac_opt);
                                 let _ = save_state(&state);
                                 format!("{{\"success\":true,\"volume\":{}}}", val)
@@ -667,7 +691,19 @@ fn cmd_daemon() {
                                 let mut state = load_state().unwrap_or_default();
                                 state.auto_pause_enabled = enable;
                                 let conn_opt = {
-                                    let guard = conn_for_socket.lock().unwrap();
+                                    let mut guard = conn_for_socket.lock().unwrap();
+                                    if guard.is_none() {
+                                        let mac = if !state.mac.is_empty() {
+                                            state.mac.clone()
+                                        } else {
+                                            mac_for_socket.lock().unwrap().clone()
+                                        };
+                                        if !mac.is_empty() {
+                                            if let Ok(new_conn) = L2capConnection::connect(&mac) {
+                                                *guard = Some(Arc::new(new_conn));
+                                            }
+                                        }
+                                    }
                                     guard.clone()
                                 };
                                 if let Some(ref conn) = conn_opt {
@@ -685,7 +721,19 @@ fn cmd_daemon() {
                                     let mut state = load_state().unwrap_or_default();
                                     state.mic_mode = m;
                                     let conn_opt = {
-                                        let guard = conn_for_socket.lock().unwrap();
+                                        let mut guard = conn_for_socket.lock().unwrap();
+                                        if guard.is_none() {
+                                            let mac = if !state.mac.is_empty() {
+                                                state.mac.clone()
+                                            } else {
+                                                mac_for_socket.lock().unwrap().clone()
+                                            };
+                                            if !mac.is_empty() {
+                                                if let Ok(new_conn) = L2capConnection::connect(&mac) {
+                                                    *guard = Some(Arc::new(new_conn));
+                                                }
+                                            }
+                                        }
                                         guard.clone()
                                     };
                                     if let Some(ref conn) = conn_opt {
@@ -721,11 +769,30 @@ fn cmd_daemon() {
     });
 
     // Thread 2 (Main Thread): Hardware L2CAP & In-Ear / Battery Event Monitoring Loop
-    loop {
-        let devices = discover_beats_devices();
-        let connected_dev = devices.iter().find(|d| d.connected);
+    let mut last_discovery = std::time::Instant::now() - Duration::from_secs(10);
+    let mut cached_dev: Option<bluez::DiscoveredDevice> = None;
 
-        if let Some(dev) = connected_dev {
+    loop {
+        let conn_is_active = {
+            let guard = active_conn.lock().unwrap();
+            guard.is_some()
+        };
+
+        // When connected, throttle bluetoothctl discovery to once every 3s to minimize CPU
+        // When disconnected, discover every 1.5s
+        let interval = if conn_is_active {
+            Duration::from_secs(3)
+        } else {
+            Duration::from_millis(1500)
+        };
+
+        if last_discovery.elapsed() >= interval {
+            last_discovery = std::time::Instant::now();
+            let devices = discover_beats_devices();
+            cached_dev = devices.into_iter().find(|d| d.connected);
+        }
+
+        if let Some(ref dev) = cached_dev {
             let mut need_connect = false;
             {
                 let mut mac_guard = active_mac.lock().unwrap();
@@ -754,6 +821,16 @@ fn cmd_daemon() {
 
                         let mut guard = active_conn.lock().unwrap();
                         *guard = Some(Arc::new(conn));
+
+                        // If user previously selected an EQ profile, apply it once sink is ready
+                        let dev_mac = dev.mac.clone();
+                        thread::spawn(move || {
+                            thread::sleep(Duration::from_millis(800));
+                            let current_state = load_state().unwrap_or_default();
+                            if current_state.eq_profile != "Flat" {
+                                equalizer::apply_profile(&current_state.eq_profile, Some(&dev_mac));
+                            }
+                        });
                     }
                     Err(_) => {
                         thread::sleep(Duration::from_millis(1500));
@@ -848,24 +925,31 @@ fn cmd_daemon() {
                         let mut state = load_state().unwrap_or_default();
                         state.connected = false;
                         let _ = save_state(&state);
+                        equalizer::stop_equalizer();
+                        cached_dev = None;
                         thread::sleep(Duration::from_millis(1000));
                     }
                 }
             }
         } else {
             // Headset disconnected in BlueZ
+            let mut was_connected = false;
             {
                 let mut guard = active_conn.lock().unwrap();
                 if guard.is_some() {
                     *guard = None;
-                    let mut mac_guard = active_mac.lock().unwrap();
-                    mac_guard.clear();
-                    let mut state = load_state().unwrap_or_default();
-                    state.connected = false;
-                    let _ = save_state(&state);
+                    was_connected = true;
                 }
             }
-            thread::sleep(Duration::from_millis(1500));
+            if was_connected {
+                let mut mac_guard = active_mac.lock().unwrap();
+                mac_guard.clear();
+                let mut state = load_state().unwrap_or_default();
+                state.connected = false;
+                let _ = save_state(&state);
+                equalizer::stop_equalizer();
+            }
+            thread::sleep(Duration::from_millis(1000));
         }
     }
 }

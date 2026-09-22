@@ -21,33 +21,33 @@ pub const PROFILES: &[EqProfile] = &[
     EqProfile {
         name: "Beats Signature",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.0, gain: 3.5 },
-            EqBand { filter_type: "bq_peaking", freq: 250.0, q: 1.0, gain: 1.5 },
-            EqBand { filter_type: "bq_peaking", freq: 1000.0, q: 1.0, gain: -1.5 },
+            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.0, gain: 4.0 },
+            EqBand { filter_type: "bq_peaking", freq: 250.0, q: 1.0, gain: 2.0 },
+            EqBand { filter_type: "bq_peaking", freq: 1000.0, q: 1.0, gain: -2.0 },
             EqBand { filter_type: "bq_peaking", freq: 3000.0, q: 1.0, gain: 1.0 },
-            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 2.5 },
-            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 2.0 },
+            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 3.0 },
+            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 2.5 },
         ],
     },
     EqProfile {
         name: "Bass Boost",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 80.0, q: 1.1, gain: 5.5 },
-            EqBand { filter_type: "bq_peaking", freq: 200.0, q: 1.0, gain: 2.5 },
-            EqBand { filter_type: "bq_peaking", freq: 800.0, q: 1.0, gain: -1.5 },
-            EqBand { filter_type: "bq_peaking", freq: 2500.0, q: 1.0, gain: -1.0 },
-            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: -0.5 },
-            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: -1.5 },
+            EqBand { filter_type: "bq_lowshelf", freq: 70.0, q: 1.2, gain: 6.5 },
+            EqBand { filter_type: "bq_peaking", freq: 160.0, q: 1.0, gain: 3.5 },
+            EqBand { filter_type: "bq_peaking", freq: 600.0, q: 1.0, gain: -1.5 },
+            EqBand { filter_type: "bq_peaking", freq: 2000.0, q: 1.0, gain: -2.0 },
+            EqBand { filter_type: "bq_peaking", freq: 5000.0, q: 1.0, gain: -1.0 },
+            EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: -2.0 },
         ],
     },
     EqProfile {
         name: "Vocal Clarity",
         bands: [
-            EqBand { filter_type: "bq_lowshelf", freq: 100.0, q: 0.9, gain: -3.0 },
-            EqBand { filter_type: "bq_peaking", freq: 300.0, q: 1.0, gain: -1.5 },
-            EqBand { filter_type: "bq_peaking", freq: 1200.0, q: 1.1, gain: 2.5 },
-            EqBand { filter_type: "bq_peaking", freq: 3000.0, q: 1.2, gain: 4.0 },
-            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 2.0 },
+            EqBand { filter_type: "bq_lowshelf", freq: 100.0, q: 0.9, gain: -4.0 },
+            EqBand { filter_type: "bq_peaking", freq: 300.0, q: 1.0, gain: -2.0 },
+            EqBand { filter_type: "bq_peaking", freq: 1200.0, q: 1.1, gain: 3.0 },
+            EqBand { filter_type: "bq_peaking", freq: 3000.0, q: 1.2, gain: 5.0 },
+            EqBand { filter_type: "bq_peaking", freq: 6000.0, q: 1.0, gain: 2.5 },
             EqBand { filter_type: "bq_highshelf", freq: 10000.0, q: 1.0, gain: 1.0 },
         ],
     },
@@ -187,14 +187,14 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         .unwrap_or(&PROFILES[3]); // Default to Flat
 
     let bt_sink = get_bluetooth_sink_name(mac);
-    let cur_vol = get_sink_volume("@DEFAULT_SINK@")
-        .or_else(|| bt_sink.as_deref().and_then(get_sink_volume))
-        .unwrap_or(60);
 
     // If Flat, stop filter-chain and route streams directly to Bluetooth device
     if profile.name == "Flat" {
         stop_equalizer();
         if let Some(ref sink) = bt_sink {
+            let cur_vol = get_sink_volume(sink)
+                .or_else(|| get_sink_volume("@DEFAULT_SINK@"))
+                .unwrap_or(50);
             let _ = Command::new("/usr/bin/pactl")
                 .args(["set-default-sink", sink])
                 .stdin(Stdio::null())
@@ -209,6 +209,20 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         }
         return true;
     }
+
+    // Beats profile requires the Bluetooth audio sink. Do NOT hijack laptop speakers!
+    let target_sink = match bt_sink {
+        Some(s) => s,
+        None => {
+            // Headset sink not ready in PipeWire; stop EQ and defer activation
+            stop_equalizer();
+            return true;
+        }
+    };
+
+    let cur_vol = get_sink_volume(&target_sink)
+        .or_else(|| get_sink_volume("@DEFAULT_SINK@"))
+        .unwrap_or(50);
 
     stop_equalizer();
 
@@ -245,11 +259,7 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
         nodes_json.push_str(&node_str);
     }
 
-    let target_obj_prop = if let Some(ref sink) = bt_sink {
-        format!("\n                target.object    = \"{}\"", sink)
-    } else {
-        String::new()
-    };
+    let target_obj_prop = format!("\n                target.object    = \"{}\"", target_sink);
 
     let filter_conf = format!(
         r#"context.modules = [
