@@ -392,7 +392,7 @@ fn resolve_anc_mode_and_level(input: &str) -> Option<(AncMode, i32)> {
         let level = num.clamp(0, 100);
         let mode = if level <= 30 {
             AncMode::NoiseCancellation
-        } else if level <= 69 {
+        } else if level <= 50 {
             AncMode::Off
         } else {
             AncMode::Transparency
@@ -436,8 +436,7 @@ fn cmd_set_anc(mode_str: &str) {
     }
 
     if mode == AncMode::Transparency && level > 50 {
-        let gain = (((level - 50) as f32 * 2.0).clamp(20.0, 100.0)) as u32;
-        transparency::set_ambient_passthrough(gain);
+        transparency::set_ambient_passthrough(level as u32);
     } else {
         transparency::disable_ambient_passthrough();
     }
@@ -693,8 +692,7 @@ fn cmd_daemon() {
                                     }
 
                                     if m == AncMode::Transparency && level > 50 {
-                                        let gain = (((level - 50) as f32 * 2.0).clamp(20.0, 100.0)) as u32;
-                                        transparency::set_ambient_passthrough(gain);
+                                        transparency::set_ambient_passthrough(level as u32);
                                     } else {
                                         transparency::disable_ambient_passthrough();
                                     }

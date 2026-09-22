@@ -521,7 +521,7 @@ Panel {
               Text {
                 text: root.noiseLevel <= 30
                       ? "ANC Active (Max Noise Cancellation)"
-                      : (root.noiseLevel <= 69
+                      : (root.noiseLevel <= 50
                          ? "Off (Passive Isolation)"
                          : ("Transparency (" + Math.round((root.noiseLevel - 50) * 2) + "% Ambient Passthrough)"))
                 color: root.foreground
@@ -585,8 +585,8 @@ Panel {
                   bordered: true
                   horizontalPadding: Style.space(4)
                   selected: (modelData.level === 0 && root.noiseLevel <= 30) ||
-                            (modelData.level === 50 && root.noiseLevel > 30 && root.noiseLevel < 70) ||
-                            (modelData.level === 100 && root.noiseLevel >= 70)
+                            (modelData.level === 50 && root.noiseLevel > 30 && root.noiseLevel <= 50) ||
+                            (modelData.level === 100 && root.noiseLevel > 50)
                   foreground: root.foreground
                   accent: root.accent
                   fontFamily: root.fontFamily
