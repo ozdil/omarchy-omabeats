@@ -103,17 +103,21 @@ impl L2capConnection {
     fn perform_handshake(&self) -> io::Result<()> {
         // 1. Send Handshake
         self.send_raw(&commands::HANDSHAKE)?;
-        std::thread::sleep(Duration::from_millis(50));
+        let _ = self.poll_read_packet(100);
 
-        // 2. Send Host Capabilities
+        // 2. Send Host Capabilities (iOS features equivalent)
         self.send_raw(&commands::SET_FEATURES)?;
-        std::thread::sleep(Duration::from_millis(50));
+        let _ = self.poll_read_packet(100);
 
         // 3. Subscribe to Notifications
         self.send_raw(&commands::SUBSCRIBE_NOTIFICATIONS)?;
         std::thread::sleep(Duration::from_millis(50));
 
-        // 4. Enable One-Bud ANC so ANC / Transparency works even with one bud
+        // 4. Enable All Listening Modes in firmware rotation (Off + Noise + Transparency + Adaptive)
+        let _ = self.send_raw(&commands::ENABLE_ALL_LISTENING_MODES);
+        std::thread::sleep(Duration::from_millis(30));
+
+        // 5. Enable One-Bud ANC so ANC / Transparency works even with one bud
         let _ = self.send_raw(&commands::set_one_bud_anc(true));
 
         Ok(())
@@ -221,6 +225,8 @@ impl L2capConnection {
     }
 
     pub fn set_anc_mode(&self, mode: AncMode) -> io::Result<()> {
+        let _ = self.send_raw(&commands::ENABLE_ALL_LISTENING_MODES);
+        std::thread::sleep(Duration::from_millis(15));
         let packet = commands::set_anc_mode(mode);
         self.send_raw(&packet)
     }

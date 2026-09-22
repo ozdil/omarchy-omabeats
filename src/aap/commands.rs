@@ -15,6 +15,12 @@ pub const SUBSCRIBE_NOTIFICATIONS: [u8; 10] = [
     0x04, 0x00, 0x04, 0x00, 0x0F, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
 ];
 
+/// Enables all listening modes in firmware rotation (Off + Noise + Transparency + Adaptive)
+/// Bitmask: 0x01=Off, 0x02=Noise, 0x04=Transparency, 0x08=Adaptive (0x0F = all enabled)
+pub const ENABLE_ALL_LISTENING_MODES: [u8; 11] = [
+    0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1A, 0x0F, 0x00, 0x00, 0x00,
+];
+
 /// Builds an AAP control command packet
 pub fn control_command(sub_cmd: u8, value: u8) -> Vec<u8> {
     vec![

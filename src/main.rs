@@ -622,6 +622,7 @@ fn cmd_daemon() {
                                 if let Some(m) = AncMode::from_str_name(parts[1]) {
                                     let mut state = load_state().unwrap_or_default();
                                     state.anc_mode = m;
+                                    let mut sent_ok = false;
                                     let conn_opt = {
                                         let mut guard = conn_for_socket.lock().unwrap();
                                         if guard.is_none() {
@@ -639,7 +640,23 @@ fn cmd_daemon() {
                                         guard.clone()
                                     };
                                     if let Some(ref conn) = conn_opt {
-                                        let _ = conn.set_anc_mode(m);
+                                        if conn.set_anc_mode(m).is_ok() {
+                                            sent_ok = true;
+                                        }
+                                    }
+                                    if !sent_ok {
+                                        let mac = if !state.mac.is_empty() {
+                                            state.mac.clone()
+                                        } else {
+                                            mac_for_socket.lock().unwrap().clone()
+                                        };
+                                        if !mac.is_empty() {
+                                            if let Ok(new_conn) = L2capConnection::connect(&mac) {
+                                                let _ = new_conn.set_anc_mode(m);
+                                                let mut guard = conn_for_socket.lock().unwrap();
+                                                *guard = Some(Arc::new(new_conn));
+                                            }
+                                        }
                                     }
                                     let _ = save_state(&state);
                                     format!("{{\"success\":true,\"anc_mode\":\"{}\"}}", m.as_str())
@@ -651,25 +668,11 @@ fn cmd_daemon() {
                             }
                         }
                         "eq" => {
-                            if parts.len() >= 2 {
-                                let prof = parts[1..].join(" ");
-                                let mut state = load_state().unwrap_or_default();
-                                state.eq_profile = prof.clone();
-                                let mac_guard = mac_for_socket.lock().unwrap();
-                                let mac_opt = if !mac_guard.is_empty() {
-                                    Some(mac_guard.as_str())
-                                } else if !state.mac.is_empty() {
-                                    Some(state.mac.as_str())
-                                } else {
-                                    None
-                                };
-                                let success = equalizer::apply_profile(&prof, mac_opt);
-                                state.volume = get_system_volume();
-                                let _ = save_state(&state);
-                                format!("{{\"success\":{},\"eq_profile\":\"{}\",\"volume\":{}}}", success, prof, state.volume)
-                            } else {
-                                "{\"success\":false,\"error\":\"Missing EQ profile\"}".to_string()
-                            }
+                            let mut state = load_state().unwrap_or_default();
+                            state.eq_profile = "Flat".to_string();
+                            let _ = save_state(&state);
+                            equalizer::stop_equalizer();
+                            "{\"success\":true,\"eq_profile\":\"Flat\"}".to_string()
                         }
                         "volume" => {
                             if parts.len() >= 2 {
@@ -828,15 +831,7 @@ fn cmd_daemon() {
                         let mut guard = active_conn.lock().unwrap();
                         *guard = Some(Arc::new(conn));
 
-                        // If user previously selected an EQ profile, apply it once sink is ready
-                        let dev_mac = dev.mac.clone();
-                        thread::spawn(move || {
-                            thread::sleep(Duration::from_millis(800));
-                            let current_state = load_state().unwrap_or_default();
-                            if current_state.eq_profile != "Flat" {
-                                equalizer::apply_profile(&current_state.eq_profile, Some(&dev_mac));
-                            }
-                        });
+                        equalizer::stop_equalizer();
                     }
                     Err(_) => {
                         thread::sleep(Duration::from_millis(1500));

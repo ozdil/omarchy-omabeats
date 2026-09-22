@@ -42,7 +42,6 @@ Panel {
   property string ancMode: "NoiseCancellation"
   property string micMode: "Auto"
   property bool autoPauseEnabled: true
-  property string eqProfile: "Beats Signature"
   property string codec: "AAC"
   property int rssi: -60
   property string mac: "04:9D:05:DD:08:62"
@@ -65,11 +64,6 @@ Panel {
     if (!args || args.length === 0) return
     ctlProc.command = [root.resolveCtlPath()].concat(args)
     ctlProc.running = true
-  }
-
-  function setEqProfile(name) {
-    root.eqProfile = name
-    root.runEngineCommand(["eq", name])
   }
 
   function refresh() {
@@ -116,7 +110,6 @@ Panel {
           root.inEarRight = d.in_ear_right !== undefined ? !!d.in_ear_right : !!ie.right
 
           if (d.anc_mode) root.ancMode = String(d.anc_mode)
-          if (d.eq_profile) root.eqProfile = String(d.eq_profile)
           if (d.codec) root.codec = String(d.codec)
           if (d.rssi !== undefined) root.rssi = Number(d.rssi)
           if (d.mac) root.mac = String(d.mac)
@@ -575,49 +568,6 @@ Panel {
             }
           }
 
-          // 6. Sound Profile / Equalizer
-          PanelSeparator {
-            foreground: root.foreground
-          }
-
-          PanelSectionHeader {
-            text: "SOUND PROFILES (EQUALIZER)"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            readonly property var eqList: [
-              { id: "Beats Signature", label: "Signature" },
-              { id: "Bass Boost", label: "Bass+" },
-              { id: "Vocal Clarity", label: "Vocal" },
-              { id: "Flat", label: "Flat" }
-            ]
-
-            Repeater {
-              model: parent.eqList
-
-              delegate: Button {
-                required property var modelData
-                width: Math.floor((parent.width - 3 * Style.space(6)) / 4)
-                text: modelData.label
-                bordered: true
-                horizontalPadding: Style.space(4)
-                selected: root.eqProfile === modelData.id
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: {
-                  root.eqProfile = modelData.id
-                  root.setEqProfile(modelData.id)
-                }
-              }
-            }
-          }
 
           // 7. Find My / Chime Actions
           PanelSeparator {
