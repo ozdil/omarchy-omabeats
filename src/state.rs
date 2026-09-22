@@ -1,5 +1,5 @@
 use crate::aap::{AncMode, MicMode};
-use crate::models::DeviceModelInfo;
+use crate::models::{ConnectionType, DeviceModelInfo};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,12 @@ pub struct BeatsState {
     pub test_mode: bool,
     pub mac: String,
     pub model: DeviceModelInfo,
+    #[serde(default)]
+    pub connection_type: Option<ConnectionType>,
+    #[serde(default)]
+    pub is_wired: bool,
+    #[serde(default)]
+    pub wired_model: Option<String>,
     pub codec: String,
     pub rssi: i32,
     pub battery_left: i32,
@@ -47,6 +53,9 @@ impl Default for BeatsState {
             test_mode: false,
             mac: "04:9D:05:DD:08:62".to_string(),
             model,
+            connection_type: Some(ConnectionType::BluetoothL2cap),
+            is_wired: false,
+            wired_model: None,
             codec: "AAC".to_string(),
             rssi: -58,
             battery_left: 85,

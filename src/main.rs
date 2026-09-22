@@ -8,6 +8,7 @@ mod mpris;
 mod security;
 mod state;
 mod transparency;
+mod wired;
 
 use aap::{AncMode, MicMode};
 use bluez::{connect_device, detect_active_codec, disconnect_device, discover_beats_devices};
@@ -18,6 +19,7 @@ use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -66,7 +68,9 @@ KULLANIM:
 KOMUTLAR:
     daemon                      Arka plan donanim ve olay dinleme servisini baslatir
     status                      Mevcut kulaklik durumunu JSON olarak dondurur
-    sync                        BlueZ ve donanim durumunu tarayip durumu gunceller
+    sync                        BlueZ, USB ve donanim durumunu tarayip gunceller
+    models                      Desteklenen tum Beats modellerini listeler
+    wired <MODEL|reset>         Kablolu Beats modelini secer (ornek: beats_ep, beats_pro, reset)
     anc <MOD>                   ANC modunu ayarlar (off | noise | transparency | adaptive)
     mic <MOD>                   Mikrofon yonlendirmesini ayarlar (auto | left | right)
     eq <PROFIL>                 Ekolayzer profilini secer (Beats Signature | Bass Boost | Vocal Clarity | Flat)
@@ -185,6 +189,20 @@ fn main() {
             }
             cmd_set_param(&args[2], &args[3]);
         }
+        "wired" => {
+            if args.len() < 3 {
+                eprintln!("Hata: Kablolu model ID belirtilmedi (ornek: beats_ep, beats_pro, urbeats_3, reset).");
+                std::process::exit(1);
+            }
+            if args[2] == "reset" || args[2] == "clear" {
+                cmd_reset_wired();
+            } else {
+                cmd_set_wired(&args[2]);
+            }
+        }
+        "models" => {
+            cmd_models();
+        }
         "--help" | "-h" | "help" => {
             print_usage();
         }
@@ -226,11 +244,12 @@ fn cmd_sync() {
 }
 
 fn get_system_volume() -> i32 {
-    let output = match std::process::Command::new("/usr/bin/pactl")
-        .args(["get-sink-volume", "@DEFAULT_SINK@"])
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
+    let mut cmd = std::process::Command::new("/usr/bin/pactl");
+    cmd.process_group(0);
+    cmd.args(["get-sink-volume", "@DEFAULT_SINK@"]);
+    cmd.stdin(std::process::Stdio::null());
+
+    let output = match cmd.output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => return 50,
     };
@@ -246,15 +265,18 @@ fn get_system_volume() -> i32 {
 }
 
 fn apply_system_volume(val: i32, mac: Option<&str>) {
-    let _ = std::process::Command::new("/usr/bin/pactl")
-        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)])
-        .stdin(std::process::Stdio::null())
-        .status();
+    let mut cmd = std::process::Command::new("/usr/bin/pactl");
+    cmd.process_group(0);
+    cmd.args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{}%", val)]);
+    cmd.stdin(std::process::Stdio::null());
+    let _ = cmd.status();
+
     if let Some(sink) = equalizer::get_bluetooth_sink_name(mac) {
-        let _ = std::process::Command::new("/usr/bin/pactl")
-            .args(["set-sink-volume", &sink, &format!("{}%", val)])
-            .stdin(std::process::Stdio::null())
-            .status();
+        let mut bt_cmd = std::process::Command::new("/usr/bin/pactl");
+        bt_cmd.process_group(0);
+        bt_cmd.args(["set-sink-volume", &sink, &format!("{}%", val)]);
+        bt_cmd.stdin(std::process::Stdio::null());
+        let _ = bt_cmd.status();
     }
 }
 
@@ -279,6 +301,9 @@ fn perform_sync() -> BeatsState {
         if dev.connected {
             state.test_mode = false;
             state.connected = true;
+            state.is_wired = false;
+            state.wired_model = None;
+            state.connection_type = Some(dev.model.default_connection);
             state.mac = dev.mac.clone();
             state.model = dev.model.clone();
             state.rssi = dev.rssi.unwrap_or(-60);
@@ -375,6 +400,22 @@ fn perform_sync() -> BeatsState {
             state.battery_case = -1;
             state.charging_case = false;
             state.battery_single = -1;
+        }
+    }
+
+    // Check for USB Lossless Beats Device or active wired selection if not connected via Bluetooth
+    if !state.connected && !state.test_mode {
+        if let Some(usb_dev) = wired::detect_usb_beats_device() {
+            state.connected = true;
+            state.is_wired = true;
+            state.connection_type = Some(usb_dev.connection_type);
+            state.model = usb_dev.model;
+            state.codec = "USB 24-bit Lossless".to_string();
+            state.battery_left = -1;
+            state.battery_right = -1;
+            state.battery_case = -1;
+        } else if state.is_wired && state.wired_model.is_some() {
+            state.connected = true;
         }
     }
 
@@ -479,6 +520,38 @@ fn cmd_set_eq(profile: &str) {
     println!("{{\"success\":{},\"eq_profile\":\"{}\",\"volume\":{}}}", success, profile, state.volume);
 }
 
+fn cmd_set_wired(model_id: &str) {
+    let mut state = load_state().unwrap_or_default();
+    let model = models::find_model(model_id);
+    state.connected = true;
+    state.is_wired = true;
+    state.wired_model = Some(model_id.to_string());
+    state.model = model;
+    state.connection_type = Some(models::ConnectionType::AnalogJack);
+    let eq = wired::get_wired_model_eq_preset(model_id);
+    state.eq_profile = eq.to_string();
+    let mac = if !state.mac.is_empty() { Some(state.mac.as_str()) } else { None };
+    let _ = equalizer::apply_profile(eq, mac);
+    let _ = save_state(&state);
+    println!("{{\"success\":true,\"wired_model\":\"{}\",\"eq\":\"{}\"}}", model_id, eq);
+}
+
+fn cmd_reset_wired() {
+    let mut state = load_state().unwrap_or_default();
+    state.is_wired = false;
+    state.wired_model = None;
+    equalizer::stop_equalizer();
+    let _ = save_state(&state);
+    println!("{{\"success\":true,\"reset\":true}}");
+}
+
+fn cmd_models() {
+    let list = models::get_known_beats_models();
+    if let Ok(json) = serde_json::to_string_pretty(&list) {
+        println!("{}", json);
+    }
+}
+
 fn cmd_chime(target: &str) {
     let mut state = load_state().unwrap_or_default();
     if target == "off" || target == "none" {
@@ -491,21 +564,23 @@ fn cmd_chime(target: &str) {
             _ => "chime_both.wav",
         };
 
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let paths = [
-            format!("/home/ozdil/.config/omarchy/plugins/ozdil.omabeats/resources/{}", wav_name),
-            format!("/home/ozdil/Projects/omarchy/omarchy-omabeats/resources/{}", wav_name),
+            format!("{}/.config/omarchy/plugins/ozdil.omabeats/resources/{}", home, wav_name),
+            format!("{}/Projects/omarchy/omarchy-omabeats/resources/{}", home, wav_name),
             format!("/tmp/{}", wav_name),
         ];
 
         if let Some(sound_path) = paths.iter().find(|p| Path::new(p).exists()) {
             let sink = equalizer::get_bluetooth_sink_name(Some(&state.mac))
                 .unwrap_or_else(|| format!("bluez_output.{}.1", state.mac.replace(':', "_")));
-            let _ = std::process::Command::new("/usr/bin/pw-play")
-                .args(["--target", &sink, sound_path])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+            let mut play_cmd = std::process::Command::new("/usr/bin/pw-play");
+            play_cmd.process_group(0);
+            play_cmd.args(["--target", &sink, sound_path]);
+            play_cmd.stdin(std::process::Stdio::null());
+            play_cmd.stdout(std::process::Stdio::null());
+            play_cmd.stderr(std::process::Stdio::null());
+            let _ = play_cmd.spawn();
         }
     }
     let _ = save_state(&state);
@@ -604,12 +679,23 @@ fn cmd_set_param(key: &str, value: &str) {
 /// OmaBeats background hardware listener & Unix Domain Socket Server
 fn cmd_daemon() {
     let socket_path = get_socket_path();
-    if socket_path.exists() {
-        if UnixStream::connect(&socket_path).is_ok() {
-            eprintln!("OmaBeats daemon zaten calisiyor.");
-            return;
+    if let Some(parent) = socket_path.parent() {
+        if !parent.exists() {
+            let _ = std::fs::create_dir_all(parent);
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
-        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    if let Ok(meta) = std::fs::symlink_metadata(&socket_path) {
+        if meta.file_type().is_symlink() {
+            let _ = std::fs::remove_file(&socket_path);
+        } else if socket_path.exists() {
+            if UnixStream::connect(&socket_path).is_ok() {
+                eprintln!("OmaBeats daemon zaten calisiyor.");
+                return;
+            }
+            let _ = std::fs::remove_file(&socket_path);
+        }
     }
 
     let listener = match UnixListener::bind(&socket_path) {
@@ -633,7 +719,10 @@ fn cmd_daemon() {
     thread::spawn(move || {
         for stream in listener.incoming() {
             if let Ok(mut s) = stream {
-                let mut reader = BufReader::new(s.try_clone().unwrap());
+                let Ok(cloned) = s.try_clone() else {
+                    continue;
+                };
+                let mut reader = BufReader::new(cloned);
                 let mut line = String::new();
                 if reader.read_line(&mut line).is_ok() {
                     let trimmed = line.trim();
@@ -806,6 +895,39 @@ fn cmd_daemon() {
                             let _ = save_state(&s);
                             serde_json::to_string(&s).unwrap_or_default()
                         }
+                        "wired" => {
+                            if parts.len() >= 2 {
+                                let model_id = parts[1];
+                                if model_id == "reset" || model_id == "clear" {
+                                    let mut state = load_state().unwrap_or_default();
+                                    state.is_wired = false;
+                                    state.wired_model = None;
+                                    equalizer::stop_equalizer();
+                                    let _ = save_state(&state);
+                                    "{\"success\":true,\"reset\":true}".to_string()
+                                } else {
+                                    let mut state = load_state().unwrap_or_default();
+                                    let model = models::find_model(model_id);
+                                    state.connected = true;
+                                    state.is_wired = true;
+                                    state.wired_model = Some(model_id.to_string());
+                                    state.model = model;
+                                    state.connection_type = Some(models::ConnectionType::AnalogJack);
+                                    let eq = wired::get_wired_model_eq_preset(model_id);
+                                    state.eq_profile = eq.to_string();
+                                    let mac = if !state.mac.is_empty() { Some(state.mac.as_str()) } else { None };
+                                    let _ = equalizer::apply_profile(eq, mac);
+                                    let _ = save_state(&state);
+                                    format!("{{\"success\":true,\"wired_model\":\"{}\",\"eq\":\"{}\"}}", model_id, eq)
+                                }
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing model id\"}".to_string()
+                            }
+                        }
+                        "models" => {
+                            let list = models::get_known_beats_models();
+                            serde_json::to_string(&list).unwrap_or_default()
+                        }
                         _ => "{\"error\":\"Unknown daemon command\"}".to_string(),
                     };
 
@@ -821,6 +943,8 @@ fn cmd_daemon() {
     let mut cached_dev: Option<bluez::DiscoveredDevice> = None;
 
     loop {
+        transparency::verify_passthrough_safety();
+
         let conn_is_active = {
             let guard = active_conn.lock().unwrap();
             guard.is_some()
@@ -862,6 +986,9 @@ fn cmd_daemon() {
                     Ok(conn) => {
                         let mut state = load_state().unwrap_or_default();
                         state.connected = true;
+                        state.is_wired = false;
+                        state.wired_model = None;
+                        state.connection_type = Some(dev.model.default_connection);
                         state.mac = dev.mac.clone();
                         state.model = dev.model.clone();
                         state.codec = detect_active_codec(&dev.mac);
@@ -922,6 +1049,11 @@ fn cmd_daemon() {
                                         state.charging_single = s.charging;
                                     }
 
+                                    // SAFETY: If both earbuds are charging in the case, instantly disable passthrough loopback
+                                    if state.charging_left && state.charging_right {
+                                        transparency::disable_ambient_passthrough();
+                                    }
+
                                     let curr_count = (state.in_ear_left as usize) + (state.in_ear_right as usize);
                                     if state.auto_pause_enabled && prev_count > 0 && curr_count < prev_count {
                                         mpris::pause_media();
@@ -968,6 +1100,7 @@ fn cmd_daemon() {
                         let mut state = load_state().unwrap_or_default();
                         state.connected = false;
                         let _ = save_state(&state);
+                        transparency::disable_ambient_passthrough();
                         equalizer::stop_equalizer();
                         cached_dev = None;
                         thread::sleep(Duration::from_millis(1000));
@@ -975,7 +1108,7 @@ fn cmd_daemon() {
                 }
             }
         } else {
-            // Headset disconnected in BlueZ
+            // Headset disconnected in BlueZ -> check for USB Lossless or Wired Beats
             let mut was_connected = false;
             {
                 let mut guard = active_conn.lock().unwrap();
@@ -990,8 +1123,31 @@ fn cmd_daemon() {
                 let mut state = load_state().unwrap_or_default();
                 state.connected = false;
                 let _ = save_state(&state);
+                transparency::disable_ambient_passthrough();
                 equalizer::stop_equalizer();
             }
+
+            // USB-C Beats Detection (Beats Studio Pro, Beats Solo 4, Beats Pill 2024 Lossless Mode)
+            if let Some(usb_dev) = wired::detect_usb_beats_device() {
+                let mut state = load_state().unwrap_or_default();
+                if !state.connected || !state.is_wired {
+                    state.connected = true;
+                    state.is_wired = true;
+                    state.connection_type = Some(usb_dev.connection_type);
+                    state.model = usb_dev.model;
+                    state.codec = "USB 24-bit Lossless".to_string();
+                    let _ = save_state(&state);
+                }
+            } else {
+                let mut state = load_state().unwrap_or_default();
+                if state.is_wired && state.wired_model.is_none() {
+                    state.connected = false;
+                    state.is_wired = false;
+                    let _ = save_state(&state);
+                }
+            }
+
+            transparency::verify_passthrough_safety();
             thread::sleep(Duration::from_millis(1000));
         }
     }

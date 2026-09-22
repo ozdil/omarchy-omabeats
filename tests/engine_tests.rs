@@ -144,3 +144,62 @@ fn test_mock_simulator_mutation() {
     assert_eq!(state.model.model_id, "beats_studio_pro");
     assert_eq!(state.model.form_factor, FormFactor::OverEar);
 }
+
+#[test]
+fn test_all_historical_and_modern_beats_models() {
+    // 1. Historical Wired Models
+    let ep = models::match_model("Beats EP", "");
+    assert_eq!(ep.model_id, "beats_ep");
+    assert_eq!(ep.default_connection, models::ConnectionType::AnalogJack);
+    assert!(ep.is_wired_only);
+
+    let pro = models::match_model("Beats Pro", "");
+    assert_eq!(pro.model_id, "beats_pro");
+    assert_eq!(pro.form_factor, FormFactor::OverEar);
+
+    let urbeats = models::match_model("urBeats 3", "");
+    assert_eq!(urbeats.model_id, "urbeats_3");
+
+    let solo_hd = models::match_model("Beats Solo HD", "");
+    assert_eq!(solo_hd.model_id, "beats_solo_hd");
+
+    let mixr = models::match_model("Beats Mixr", "");
+    assert_eq!(mixr.model_id, "beats_mixr");
+
+    // 2. Modern 2023-2024 Models
+    let studio_pro = models::match_model("Beats Studio Pro", "");
+    assert_eq!(studio_pro.model_id, "beats_studio_pro");
+    assert!(studio_pro.has_usb_audio);
+    assert!(studio_pro.has_anc);
+
+    let solo_4 = models::match_model("Beats Solo 4", "");
+    assert_eq!(solo_4.model_id, "beats_solo_4");
+    assert!(solo_4.has_usb_audio);
+    assert_eq!(solo_4.form_factor, FormFactor::OnEar);
+
+    let solo_buds = models::match_model("Beats Solo Buds", "");
+    assert_eq!(solo_buds.model_id, "beats_solo_buds");
+    assert_eq!(solo_buds.form_factor, FormFactor::Earbuds);
+
+    let pill = models::match_model("Beats Pill", "");
+    assert_eq!(pill.model_id, "beats_pill_2024");
+    assert_eq!(pill.form_factor, FormFactor::Speaker);
+}
+
+#[test]
+fn test_future_proof_beats_discovery() {
+    // Unreleased / Future models
+    let future_buds = models::match_model("Beats Apex Buds Ultra 2028", "bluetooth:v004Cp9999");
+    assert_eq!(future_buds.model_id, "beats_future_device");
+    assert_eq!(future_buds.form_factor, FormFactor::Earbuds);
+    assert!(future_buds.has_anc);
+    assert!(future_buds.has_in_ear);
+
+    let future_headphones = models::match_model("Beats Solo 6 Wireless Over-Ear", "");
+    assert_eq!(future_headphones.model_id, "beats_future_device");
+    assert_eq!(future_headphones.form_factor, FormFactor::OnEar);
+
+    let future_speaker = models::match_model("Beats Mega Pill Extreme Speaker", "");
+    assert_eq!(future_speaker.model_id, "beats_future_device");
+    assert_eq!(future_speaker.form_factor, FormFactor::Speaker);
+}

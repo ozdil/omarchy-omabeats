@@ -1,6 +1,7 @@
 use crate::security::{atomic_write_secure, spawn_isolated};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -83,8 +84,10 @@ pub fn stop_equalizer() {
     if pid_file.exists() {
         if let Ok(content) = fs::read_to_string(&pid_file) {
             if let Ok(pid) = content.trim().parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, libc::SIGTERM);
+                if pid > 1 {
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
                 }
             }
         }
@@ -92,12 +95,13 @@ pub fn stop_equalizer() {
     }
 
     // Also terminate any leftover omabeats pipewire filter-chain instances
-    let _ = Command::new("/usr/bin/pkill")
-        .args(["-f", "omabeats_eq/filter-chain.conf"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let mut cmd = Command::new("/usr/bin/pkill");
+    cmd.process_group(0);
+    cmd.args(["-f", "omabeats_eq/filter-chain.conf"]);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let _ = cmd.status();
 }
 
 /// Dynamically locates the active Bluetooth Pulse/PipeWire sink for given MAC address

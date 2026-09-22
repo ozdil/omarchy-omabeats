@@ -131,7 +131,7 @@ impl L2capConnection {
                 self.fd,
                 data.as_ptr() as *const libc::c_void,
                 data.len(),
-                0,
+                libc::MSG_NOSIGNAL,
             )
         };
         if sent < 0 {

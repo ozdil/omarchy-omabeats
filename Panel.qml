@@ -26,6 +26,10 @@ Panel {
   property bool hasAdaptive: true
   property bool hasInEar: true
   property bool hasChime: true
+  property bool isWired: false
+  property string connectionType: ""
+  property string wiredModel: ""
+  readonly property bool isBothCharging: (root.chargingLeft && root.chargingRight && !root.inEarLeft && !root.inEarRight)
 
   property int batteryLeft: 95
   property bool chargingLeft: false
@@ -121,6 +125,13 @@ Panel {
           if (d.rssi !== undefined) root.rssi = Number(d.rssi)
           if (d.mac) root.mac = String(d.mac)
           if (d.auto_pause_enabled !== undefined) root.autoPauseEnabled = !!d.auto_pause_enabled
+          root.isWired = !!d.is_wired
+          root.connectionType = String(d.connection_type || "")
+          root.wiredModel = String(d.wired_model || "")
+
+          if (!root.connected || root.isBothCharging) {
+            if (root.opened) root.close()
+          }
         } catch (e) {
           // ignore parsing error
         }
@@ -155,11 +166,14 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󰋋"
+    opacity: !root.connected ? 0.35 : (root.isBothCharging ? 0.55 : 1.0)
     fontFamily: root.fontFamily
     foreground: bar ? bar.foreground : root.foreground
-    tooltipText: root.connected
-                 ? ("OmaBeats: " + root.modelName + (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Connected)"))
-                 : "OmaBeats: Disconnected"
+    tooltipText: root.isBothCharging
+                 ? ("OmaBeats: " + root.modelName + " (Kutuda Sarj Oluyor)")
+                 : (root.connected
+                    ? ("OmaBeats: " + root.modelName + (root.isWired ? " (Kablolu)" : (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Bagli)")))
+                    : "OmaBeats: Bagli Degil")
     onPressed: function(b) {
       if (root.opened) root.close()
       else root.open()
@@ -208,7 +222,11 @@ Panel {
               id: hero
               width: parent.width
               title: root.modelName
-              meta: root.connected ? ("CONNECTED · " + root.codec + (root.rssi !== 0 ? (" · " + root.rssi + " dBm") : "")) : "NOT CONNECTED"
+              meta: root.isBothCharging
+                    ? "KUTUDA SARJ OLUYOR · BEKLEMEDE"
+                    : (root.connected
+                       ? ((root.isWired ? "KABLOLU · " : "BAGLI · ") + root.codec + (!root.isWired && root.rssi !== 0 ? (" · " + root.rssi + " dBm") : ""))
+                       : "BAGLANTI YOK")
               foreground: root.foreground
               fontFamily: root.fontFamily
               iconComponent: Component {
@@ -250,11 +268,45 @@ Panel {
             fontFamily: root.fontFamily
           }
 
+          // Wired Mode Indicator Card (Lossless USB-C or 3.5mm Analog)
+          BorderSurface {
+            width: parent.width
+            implicitHeight: Style.space(44)
+            visible: root.isWired
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+            radius: Style.cornerRadius
+            borderSpec: Border.flat(Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1)
+
+            Row {
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(14)
+              anchors.rightMargin: Style.space(14)
+              spacing: Style.space(10)
+
+              Text {
+                text: "󰋋"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: root.connectionType !== "" ? root.connectionType : "Kablolu Baglanti (Kesintisiz Guc)"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+
           // Tri-Battery Cards (Left, Right, Case)
           Row {
             width: parent.width
             spacing: Style.space(8)
-            visible: root.hasTriBattery
+            visible: root.hasTriBattery && !root.isWired
 
             // Left Earbud
             BorderSurface {
@@ -390,7 +442,7 @@ Panel {
           BorderSurface {
             width: parent.width
             implicitHeight: Style.space(52)
-            visible: !root.hasTriBattery
+            visible: !root.hasTriBattery && !root.isWired
             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
             radius: Style.cornerRadius
             borderSpec: Border.flat(Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1)
@@ -664,6 +716,53 @@ Panel {
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
               onClicked: root.runEngineCommand(["chime", "right"])
+            }
+          }
+
+          // Wired Beats Quick Model Selector
+          PanelSeparator {
+            foreground: root.foreground
+          }
+
+          PanelSectionHeader {
+            text: "KABLOLU BEATS PROFILI"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.space(6)
+
+            readonly property var wiredOptions: [
+              { label: "Beats EP", id: "beats_ep" },
+              { label: "Beats Pro", id: "beats_pro" },
+              { label: "urBeats 3", id: "urbeats_3" },
+              { label: "Solo HD", id: "beats_solo_hd" },
+              { label: "Studio Wired", id: "beats_studio_2_wired" },
+              { label: "Sifirla", id: "reset" }
+            ]
+
+            Repeater {
+              model: parent.wiredOptions
+
+              delegate: Button {
+                required property var modelData
+                text: modelData.label
+                bordered: true
+                selected: root.wiredModel === modelData.id
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  if (modelData.id === "reset") {
+                    root.runEngineCommand(["wired", "reset"])
+                  } else {
+                    root.runEngineCommand(["wired", modelData.id])
+                  }
+                }
+              }
             }
           }
 

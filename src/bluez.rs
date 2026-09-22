@@ -1,6 +1,7 @@
 use crate::models::{match_model, DeviceModelInfo};
 use crate::security::{reap_process_group, validate_mac_address};
 use serde::{Deserialize, Serialize};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,11 +22,12 @@ pub struct DiscoveredDevice {
 pub fn discover_beats_devices() -> Vec<DiscoveredDevice> {
     let mut devices = Vec::new();
 
-    let output = match Command::new("/usr/bin/bluetoothctl")
-        .arg("devices")
-        .stdin(Stdio::null())
-        .output()
-    {
+    let mut cmd = Command::new("/usr/bin/bluetoothctl");
+    cmd.process_group(0);
+    cmd.arg("devices");
+    cmd.stdin(Stdio::null());
+
+    let output = match cmd.output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => return devices,
     };
@@ -40,11 +42,16 @@ pub fn discover_beats_devices() -> Vec<DiscoveredDevice> {
             }
 
             if let Some(dev) = inspect_device(mac) {
-                // Filter: check if it's Beats or Apple audio accessory
-                let is_beats = dev.name.to_lowercase().contains("beats")
-                    || dev.name.to_lowercase().contains("powerbeats")
+                let name_lower = dev.name.to_lowercase();
+                let alias_lower = dev.alias.to_lowercase();
+                let is_beats = name_lower.contains("beats")
+                    || alias_lower.contains("beats")
+                    || name_lower.contains("powerbeats")
+                    || alias_lower.contains("powerbeats")
+                    || name_lower.contains("urbeats")
+                    || alias_lower.contains("urbeats")
                     || dev.modalias.to_lowercase().contains("v004c")
-                    || dev.model.model_id != "unknown";
+                    || (dev.model.model_id != "unknown" && dev.model.model_id != "generic_audio");
 
                 if is_beats {
                     devices.push(dev);
@@ -63,7 +70,9 @@ pub fn inspect_device(mac: &str) -> Option<DiscoveredDevice> {
     }
 
     let mut cmd = Command::new("/usr/bin/bluetoothctl");
-    cmd.arg("info").arg(mac).stdin(Stdio::null());
+    cmd.process_group(0);
+    cmd.args(["info", mac]);
+    cmd.stdin(Stdio::null());
 
     let output = match cmd.output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -96,7 +105,6 @@ pub fn inspect_device(mac: &str) -> Option<DiscoveredDevice> {
             rssi = val.parse::<i32>().ok();
         } else if trimmed.starts_with("Battery Percentage:") {
             let val_str = trimmed["Battery Percentage:".len()..].trim();
-            // Example: 0x55 (85) or 85%
             if let Some(open) = val_str.find('(') {
                 if let Some(close) = val_str.find(')') {
                     battery_level = val_str[open + 1..close].trim().parse::<i32>().ok();
@@ -138,7 +146,9 @@ pub fn connect_device(mac: &str) -> Result<(), String> {
     }
 
     let mut cmd = Command::new("/usr/bin/bluetoothctl");
-    cmd.arg("connect").arg(mac).stdin(Stdio::null());
+    cmd.process_group(0);
+    cmd.args(["connect", mac]);
+    cmd.stdin(Stdio::null());
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn bluetoothctl: {}", e))?;
     let status = child.wait().map_err(|e| format!("Process error: {}", e))?;
@@ -158,7 +168,9 @@ pub fn disconnect_device(mac: &str) -> Result<(), String> {
     }
 
     let mut cmd = Command::new("/usr/bin/bluetoothctl");
-    cmd.arg("disconnect").arg(mac).stdin(Stdio::null());
+    cmd.process_group(0);
+    cmd.args(["disconnect", mac]);
+    cmd.stdin(Stdio::null());
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn bluetoothctl: {}", e))?;
     let status = child.wait().map_err(|e| format!("Process error: {}", e))?;
@@ -173,14 +185,14 @@ pub fn disconnect_device(mac: &str) -> Result<(), String> {
 
 /// Detects the active audio codec for the Bluetooth device via pactl / PipeWire
 pub fn detect_active_codec(mac: &str) -> String {
-    // Pipewire/PulseAudio sink names often use bluez_output.XX_XX_XX_XX_XX_XX
     let sink_name_fragment = mac.replace(':', "_");
 
-    let output = match Command::new("/usr/bin/pactl")
-        .args(["list", "sinks"])
-        .stdin(Stdio::null())
-        .output()
-    {
+    let mut cmd = Command::new("/usr/bin/pactl");
+    cmd.process_group(0);
+    cmd.args(["list", "sinks"]);
+    cmd.stdin(Stdio::null());
+
+    let output = match cmd.output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => return "AAC".to_string(),
     };
@@ -199,6 +211,5 @@ pub fn detect_active_codec(mac: &str) -> String {
         }
     }
 
-    // Default high quality for Beats / Apple hardware on PipeWire
     "AAC".to_string()
 }
