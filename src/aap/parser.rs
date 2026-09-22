@@ -105,15 +105,50 @@ pub fn parse_packet(data: &[u8]) -> Option<ParsedAapEvent> {
 
 /// Parses the battery payload bytes into BatteryReport
 pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
-    // Format variant A: 3 pairs of [level, status]
-    // Level is 0-100, 255 = disconnected. Status bit 0 = charging.
     let mut left = None;
     let mut right = None;
     let mut case = None;
     let mut single = None;
 
-    if payload.len() >= 6 {
-        // Byte 0, 1: Left
+    if payload.is_empty() {
+        return BatteryReport { left, right, case, single };
+    }
+
+    let count = payload[0] as usize;
+    // Check if it matches AAP TLV format: payload[0] = count, followed by count * 5 bytes
+    if count > 0 && payload.len() >= 1 + count * 5 {
+        let mut offset = 1;
+        for _ in 0..count {
+            if offset + 5 > payload.len() {
+                break;
+            }
+            let comp_id = payload[offset];
+            // payload[offset + 1] is length/type (usually 0x01)
+            let level = payload[offset + 2];
+            let status = payload[offset + 3];
+            let charging = (status & 0x01) != 0;
+
+            let entry = if level <= 100 {
+                Some(BatteryEntry {
+                    level: level as i32,
+                    charging,
+                    connected: true,
+                })
+            } else {
+                None
+            };
+
+            match comp_id {
+                0x04 => left = entry,
+                0x02 => right = entry,
+                0x08 => case = entry,
+                0x01 => single = entry,
+                _ => {}
+            }
+            offset += 5;
+        }
+    } else if payload.len() >= 6 {
+        // Fallback variant A: 3 pairs of [level, status]
         let left_lvl = payload[0];
         let left_chg = (payload[1] & 0x01) != 0;
         if left_lvl <= 100 {
@@ -124,7 +159,6 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
             });
         }
 
-        // Byte 2, 3: Right
         let right_lvl = payload[2];
         let right_chg = (payload[3] & 0x01) != 0;
         if right_lvl <= 100 {
@@ -135,7 +169,6 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
             });
         }
 
-        // Byte 4, 5: Case
         let case_lvl = payload[4];
         let case_chg = (payload[5] & 0x01) != 0;
         if case_lvl <= 100 {
@@ -146,7 +179,7 @@ pub fn parse_battery_payload(payload: &[u8]) -> BatteryReport {
             });
         }
     } else if payload.len() >= 2 {
-        // Single battery payload for over-ear / neckband models
+        // Fallback single battery payload for over-ear / neckband models
         let lvl = payload[0];
         let chg = (payload[1] & 0x01) != 0;
         if lvl <= 100 {
@@ -198,5 +231,29 @@ pub fn parse_device_info_payload(payload: &[u8]) -> DeviceInfoReport {
         model_name,
         firmware,
         serial,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_real_beats_fit_pro_battery() {
+        // Real payload captured from Beats Fit Pro:
+        // count=3, item0=(id=04, len=01, val=5f [95%], status=02, 01)
+        //          item1=(id=02, len=01, val=5d [93%], status=02, 01)
+        //          item2=(id=08, len=01, val=00 [0%],  status=04, 01)
+        let payload = [
+            0x03, 0x04, 0x01, 0x5f, 0x02, 0x01,
+            0x02, 0x01, 0x5d, 0x02, 0x01,
+            0x08, 0x01, 0x00, 0x04, 0x01,
+        ];
+        let rep = parse_battery_payload(&payload);
+        assert_eq!(rep.left.as_ref().unwrap().level, 95);
+        assert_eq!(rep.left.as_ref().unwrap().charging, false);
+        assert_eq!(rep.right.as_ref().unwrap().level, 93);
+        assert_eq!(rep.right.as_ref().unwrap().charging, false);
+        assert_eq!(rep.case.as_ref().unwrap().level, 0);
     }
 }

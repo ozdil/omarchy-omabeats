@@ -155,6 +155,57 @@ impl L2capConnection {
         }
     }
 
+    /// Drains any pending buffered packets from the socket
+    pub fn drain(&self) {
+        let timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 50_000,
+        };
+        unsafe {
+            libc::setsockopt(
+                self.fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &timeout as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+        }
+        while self.read_packet().is_ok() {}
+    }
+
+    /// Reads all available AAP notification packets until socket timeout or max duration reached
+    pub fn read_all_notifications(&self, max_duration: Duration) -> Vec<Vec<u8>> {
+        let mut packets = Vec::new();
+        // Set short timeout for notification collection (200ms)
+        let timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 200_000,
+        };
+        unsafe {
+            libc::setsockopt(
+                self.fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &timeout as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+        }
+
+        let start = std::time::Instant::now();
+        while start.elapsed() < max_duration {
+            match self.read_packet() {
+                Ok(data) => {
+                    if !data.is_empty() {
+                        packets.push(data);
+                    }
+                }
+                Err(_) => break, // Timeout or would block
+            }
+        }
+
+        packets
+    }
+
     pub fn set_anc_mode(&self, mode: AncMode) -> io::Result<()> {
         let packet = commands::set_anc_mode(mode);
         self.send_raw(&packet)

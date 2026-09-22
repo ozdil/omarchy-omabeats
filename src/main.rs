@@ -115,10 +115,19 @@ fn main() {
 }
 
 fn cmd_status() {
-    let state = load_state().unwrap_or_else(|| {
-        // If state file does not exist yet, sync from BlueZ
-        perform_sync()
-    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let state = match load_state() {
+        Some(s) if !s.test_mode && now.saturating_sub(s.last_updated) < 5 => s,
+        _ => {
+            let s = perform_sync();
+            let _ = save_state(&s);
+            s
+        }
+    };
 
     match serde_json::to_string_pretty(&state) {
         Ok(json) => println!("{}", json),
@@ -137,33 +146,29 @@ fn cmd_sync() {
 fn perform_sync() -> BeatsState {
     let mut state = load_state().unwrap_or_default();
 
-    // If currently in test/mock mode, maintain mock unless explicit real device sync requested
-    if state.test_mode {
-        return state;
-    }
-
     let devices = discover_beats_devices();
     if let Some(dev) = devices.iter().find(|d| d.connected).or_else(|| devices.first()) {
-        state.connected = dev.connected;
-        state.mac = dev.mac.clone();
-        state.model = dev.model.clone();
-        state.rssi = dev.rssi.unwrap_or(-60);
-
-        if let Some(bat) = dev.battery_level {
-            if dev.model.has_tri_battery {
-                state.battery_left = bat;
-                state.battery_right = bat;
-            } else {
-                state.battery_single = bat;
-            }
-        }
-
         if dev.connected {
+            state.test_mode = false;
+            state.connected = true;
+            state.mac = dev.mac.clone();
+            state.model = dev.model.clone();
+            state.rssi = dev.rssi.unwrap_or(-60);
             state.codec = detect_active_codec(&dev.mac);
 
-            // Attempt L2CAP read if possible
+            if let Some(bat) = dev.battery_level {
+                if dev.model.has_tri_battery {
+                    state.battery_left = bat;
+                    state.battery_right = bat;
+                } else {
+                    state.battery_single = bat;
+                }
+            }
+
+            // Connect L2CAP and read incoming AAP notification stream
             if let Ok(conn) = L2capConnection::connect(&dev.mac) {
-                if let Ok(data) = conn.read_packet() {
+                let packets = conn.read_all_notifications(std::time::Duration::from_millis(500));
+                for data in packets {
                     if let Some(event) = aap::parser::parse_packet(&data) {
                         match event {
                             aap::parser::ParsedAapEvent::Battery(rep) => {
@@ -191,15 +196,40 @@ fn perform_sync() -> BeatsState {
                                 state.in_ear_left = ear.left_in_ear;
                                 state.in_ear_right = ear.right_in_ear;
                             }
+                            aap::parser::ParsedAapEvent::DeviceInfo(info) => {
+                                if !info.firmware.is_empty() {
+                                    state.firmware_version = info.firmware;
+                                }
+                                if !info.serial.is_empty() {
+                                    state.serial_number = info.serial;
+                                }
+                            }
                             _ => {}
                         }
                     }
                 }
             }
+        } else {
+            // Device paired in BlueZ but not currently connected
+            if !state.test_mode {
+                state.connected = false;
+                state.mac = dev.mac.clone();
+                state.model = dev.model.clone();
+                state.battery_left = -1;
+                state.battery_right = -1;
+                state.battery_case = -1;
+                state.battery_single = -1;
+            }
         }
     } else {
-        // No beats devices found in system
-        state.connected = false;
+        // No Beats devices found in BlueZ
+        if !state.test_mode {
+            state.connected = false;
+            state.battery_left = -1;
+            state.battery_right = -1;
+            state.battery_case = -1;
+            state.battery_single = -1;
+        }
     }
 
     state.last_updated = std::time::SystemTime::now()
@@ -222,14 +252,21 @@ fn cmd_set_anc(mode_str: &str) {
     let mut state = load_state().unwrap_or_default();
     state.anc_mode = mode;
 
-    if state.connected && !state.test_mode {
+    if !state.mac.is_empty() {
         if let Ok(conn) = L2capConnection::connect(&state.mac) {
+            conn.drain();
             let _ = conn.set_anc_mode(mode);
+            let packets = conn.read_all_notifications(std::time::Duration::from_millis(200));
+            for data in packets {
+                if let Some(aap::parser::ParsedAapEvent::AncMode(m)) = aap::parser::parse_packet(&data) {
+                    state.anc_mode = m;
+                }
+            }
         }
     }
 
     let _ = save_state(&state);
-    println!("{{\"success\":true,\"anc_mode\":\"{}\"}}", mode.as_str());
+    println!("{{\"success\":true,\"anc_mode\":\"{}\"}}", state.anc_mode.as_str());
 }
 
 fn cmd_set_mic(mode_str: &str) {
@@ -244,7 +281,7 @@ fn cmd_set_mic(mode_str: &str) {
     let mut state = load_state().unwrap_or_default();
     state.mic_mode = mode;
 
-    if state.connected && !state.test_mode {
+    if !state.mac.is_empty() {
         if let Ok(conn) = L2capConnection::connect(&state.mac) {
             let _ = conn.set_mic_mode(mode);
         }
@@ -267,7 +304,7 @@ fn cmd_chime(target: &str) {
         state.chime_active = None;
     } else {
         state.chime_active = Some(target.to_string());
-        if state.connected && !state.test_mode {
+        if !state.mac.is_empty() {
             if let Ok(conn) = L2capConnection::connect(&state.mac) {
                 let _ = conn.play_chime(target);
             }

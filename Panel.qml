@@ -127,6 +127,9 @@ Panel {
 
   Process {
     id: ctlProc
+    onExited: function() {
+      root.refresh()
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -366,7 +369,7 @@ Panel {
 
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.batteryCase >= 0 ? (root.batteryCase + "%") : "--"
+                  text: root.batteryCase > 0 ? (root.batteryCase + "%") : "--"
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
@@ -467,9 +470,10 @@ Panel {
                 foreground: root.foreground
                 accent: root.accent
                 fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: root.runEngineCommand(["anc", modelData.mode.toLowerCase()])
-              }
+                onClicked: {
+                  root.ancMode = modelData.mode
+                  root.runEngineCommand(["anc", modelData.mode.toLowerCase()])
+                }
             }
           }
 

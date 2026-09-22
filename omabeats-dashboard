@@ -37,14 +37,21 @@ elif [[ -x "${HOME}/.local/bin/quickshell" ]]; then
     QUICKSHELL_BIN="${HOME}/.local/bin/quickshell"
 fi
 
-# Launch or toggle via Quickshell IPC if running
 if [[ -n "${QUICKSHELL_BIN}" ]]; then
+    # First attempt: toggle via Quickshell IPC if bar is hosting it
     if "${QUICKSHELL_BIN}" ipc -p /usr/share/omarchy/shell call ozdil.omabeats toggle >/dev/null 2>&1; then
         exit 0
     fi
+    # Second attempt: toggle via active standalone shell IPC
+    if "${QUICKSHELL_BIN}" ipc -p "${DIR}/qml/shell.qml" call ozdil.omabeats toggle >/dev/null 2>&1; then
+        exit 0
+    fi
+
+    # Launch standalone window on desktop
+    exec "${QUICKSHELL_BIN}" -p "${DIR}/qml/shell.qml"
 fi
 
-# Fallback: run engine status
+# Fallback: CLI status
 if [[ -x "${ENGINE}" ]]; then
     exec "${ENGINE}" status
 else
