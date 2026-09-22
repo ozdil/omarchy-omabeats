@@ -58,7 +58,7 @@ impl DeviceModelInfo {
 
 pub fn get_known_beats_models() -> Vec<DeviceModelInfo> {
     vec![
-        DeviceModelInfo::new("beats_fit_pro", "Beats Fit Pro", FormFactor::Earbuds, true, true, true, true, true, true, true, true, true),
+        DeviceModelInfo::new("beats_fit_pro", "Beats Fit Pro", FormFactor::Earbuds, true, true, false, true, true, true, false, true, true),
         DeviceModelInfo::new("beats_studio_pro", "Beats Studio Pro", FormFactor::OverEar, true, true, false, false, false, true, false, false, true),
         DeviceModelInfo::new("beats_solo_4", "Beats Solo 4", FormFactor::OverEar, false, false, false, false, false, true, false, false, true),
         DeviceModelInfo::new("beats_studio_buds", "Beats Studio Buds", FormFactor::Earbuds, true, true, false, true, true, false, false, false, true),

@@ -464,16 +464,25 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
               }
 
-              Slider {
+              PanelSlider {
                 id: volSlider
                 width: parent.width - Style.space(90)
                 anchors.verticalCenter: parent.verticalCenter
-                from: 0
-                to: 100
-                stepSize: 1
+                bar: root.bar
+                minimum: 0
+                maximum: 100
+                integer: true
+                step: 1
                 value: root.volume
-                onMoved: {
-                  root.volume = Math.round(value)
+                trackColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                fillColor: root.foreground
+                knobColor: root.foreground
+                onMoved: function(next) {
+                  root.volume = Math.round(next)
+                  root.runEngineCommand(["volume", String(root.volume)])
+                }
+                onReleased: function(next) {
+                  root.volume = Math.round(next)
                   root.runEngineCommand(["volume", String(root.volume)])
                 }
               }
@@ -528,6 +537,7 @@ Panel {
                 text: modelData.label
                 iconText: modelData.icon
                 bordered: true
+                horizontalPadding: Style.space(6)
                 selected: root.ancMode === modelData.mode
                 foreground: root.foreground
                 accent: root.accent
@@ -594,6 +604,7 @@ Panel {
                 width: Math.floor((parent.width - 3 * Style.space(6)) / 4)
                 text: modelData.label
                 bordered: true
+                horizontalPadding: Style.space(4)
                 selected: root.eqProfile === modelData.id
                 foreground: root.foreground
                 accent: root.accent
