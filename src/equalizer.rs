@@ -1,9 +1,17 @@
-use crate::security::{atomic_write_secure, spawn_isolated};
+use crate::security::{atomic_write_secure, safe_read_file_limited, spawn_isolated};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
+
+/// Helper for secure isolated pactl execution with process_group(0)
+fn secure_pactl_cmd() -> Command {
+    let mut cmd = Command::new("/usr/bin/pactl");
+    cmd.process_group(0);
+    cmd.stdin(Stdio::null());
+    cmd
+}
 
 #[derive(Debug, Clone)]
 pub struct EqBand {
@@ -82,7 +90,7 @@ fn get_pid_file() -> PathBuf {
 pub fn stop_equalizer() {
     let pid_file = get_pid_file();
     if pid_file.exists() {
-        if let Ok(content) = fs::read_to_string(&pid_file) {
+        if let Ok(content) = safe_read_file_limited(&pid_file) {
             if let Ok(pid) = content.trim().parse::<i32>() {
                 if pid > 1 {
                     unsafe {
@@ -106,9 +114,8 @@ pub fn stop_equalizer() {
 
 /// Dynamically locates the active Bluetooth Pulse/PipeWire sink for given MAC address
 pub fn get_bluetooth_sink_name(mac_opt: Option<&str>) -> Option<String> {
-    let output = Command::new("/usr/bin/pactl")
+    let output = secure_pactl_cmd()
         .args(["list", "short", "sinks"])
-        .stdin(Stdio::null())
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -139,9 +146,8 @@ pub fn get_bluetooth_sink_name(mac_opt: Option<&str>) -> Option<String> {
 
 /// Retrieves the current volume percentage of a sink (or default sink)
 pub fn get_sink_volume(sink_name: &str) -> Option<i32> {
-    let output = Command::new("/usr/bin/pactl")
+    let output = secure_pactl_cmd()
         .args(["get-sink-volume", sink_name])
-        .stdin(Stdio::null())
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -157,17 +163,15 @@ pub fn get_sink_volume(sink_name: &str) -> Option<i32> {
 
 /// Moves all active playing media streams (sink-inputs) to specified sink
 pub fn move_all_sink_inputs_to(target_sink: &str) {
-    if let Ok(output) = Command::new("/usr/bin/pactl")
+    if let Ok(output) = secure_pactl_cmd()
         .args(["list", "short", "sink-inputs"])
-        .stdin(Stdio::null())
         .output()
     {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
             if let Some(id) = line.split_whitespace().next() {
-                let _ = Command::new("/usr/bin/pactl")
+                let _ = secure_pactl_cmd()
                     .args(["move-sink-input", id, target_sink])
-                    .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
@@ -198,16 +202,14 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
             let cur_vol = get_sink_volume(sink)
                 .or_else(|| get_sink_volume("@DEFAULT_SINK@"))
                 .unwrap_or(50);
-            let _ = Command::new("/usr/bin/pactl")
+            let _ = secure_pactl_cmd()
                 .args(["set-default-sink", sink])
-                .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
             move_all_sink_inputs_to(sink);
-            let _ = Command::new("/usr/bin/pactl")
+            let _ = secure_pactl_cmd()
                 .args(["set-sink-volume", sink, &format!("{}%", cur_vol)])
-                .stdin(Stdio::null())
                 .status();
             std::thread::sleep(Duration::from_millis(30));
         }
@@ -324,7 +326,7 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
     if let Ok(mut guard) = spawn_isolated(cmd) {
         if let Some(child) = guard.take() {
             let pid = child.id();
-            let _ = fs::write(get_pid_file(), pid.to_string());
+            let _ = atomic_write_secure(&get_pid_file(), &pid.to_string());
             std::mem::forget(child);
         }
     }
@@ -332,7 +334,7 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
     // 4. Wait for omabeats_eq to appear in pactl sinks (up to 500ms)
     for _ in 0..10 {
         std::thread::sleep(Duration::from_millis(50));
-        if let Ok(output) = Command::new("/usr/bin/pactl").args(["list", "short", "sinks"]).output() {
+        if let Ok(output) = secure_pactl_cmd().args(["list", "short", "sinks"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             if text.contains("omabeats_eq") {
                 break;
@@ -341,17 +343,15 @@ pub fn apply_profile(profile_name: &str, mac: Option<&str>) -> bool {
     }
 
     // 5. Synchronize volume BEFORE switching to prevent audio burst
-    let _ = Command::new("/usr/bin/pactl")
+    let _ = secure_pactl_cmd()
         .args(["set-sink-volume", "omabeats_eq", &format!("{}%", cur_vol)])
-        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
 
     // 6. Set omabeats_eq as default sink
-    let _ = Command::new("/usr/bin/pactl")
+    let _ = secure_pactl_cmd()
         .args(["set-default-sink", "omabeats_eq"])
-        .stdin(Stdio::null())
         .status();
 
     // 7. Seamlessly move active playback streams to omabeats_eq

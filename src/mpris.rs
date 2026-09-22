@@ -1,14 +1,16 @@
 use crate::security::spawn_isolated;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 /// Finds all active MPRIS media players on user session bus
 fn get_active_players() -> Vec<String> {
     let mut players = Vec::new();
-    let output = match Command::new("/usr/bin/busctl")
-        .args(["--user", "list"])
-        .stdin(Stdio::null())
-        .output()
-    {
+    let mut cmd = Command::new("/usr/bin/busctl");
+    cmd.process_group(0);
+    cmd.args(["--user", "list"]);
+    cmd.stdin(Stdio::null());
+
+    let output = match cmd.output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => return players,
     };

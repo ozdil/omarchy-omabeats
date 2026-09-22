@@ -50,7 +50,8 @@ fn try_send_daemon_command(cmd_line: &str) -> Option<String> {
     let _ = stream.shutdown(std::net::Shutdown::Write);
 
     let mut response = String::new();
-    stream.read_to_string(&mut response).ok()?;
+    let mut take_stream = stream.take(1024 * 1024);
+    take_stream.read_to_string(&mut response).ok()?;
     if response.trim().is_empty() {
         None
     } else {
@@ -580,7 +581,13 @@ fn cmd_chime(target: &str) {
             play_cmd.stdin(std::process::Stdio::null());
             play_cmd.stdout(std::process::Stdio::null());
             play_cmd.stderr(std::process::Stdio::null());
-            let _ = play_cmd.spawn();
+            std::thread::spawn(move || {
+                if let Ok(mut guard) = crate::security::spawn_isolated(play_cmd) {
+                    if let Some(mut child) = guard.take() {
+                        let _ = child.wait();
+                    }
+                }
+            });
         }
     }
     let _ = save_state(&state);
