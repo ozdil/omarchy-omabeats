@@ -1,5 +1,7 @@
 # OmaBeats
 
+[![Omarchy Verified Plugin](https://img.shields.io/badge/Omarchy-Verified_Plugin-22c55e?style=for-the-badge&logo=omarchy)](https://github.com/ozdil)
+
 **Official Beats Audio Studio & Core System Application for Omarchy Linux**
 
 *Hardware-grade Apple Accessory Protocol (AAP/L2CAP) daemon, multi-model Beats ecosystem manager (35+ models from 2008 to present, plus future-proof inference), Zero-Trust Linux kernel peer credentials (SO_PEERCRED), low-latency PipeWire DSP studio equalizer, USB-C 24-bit Lossless engine, and dual-mode Quickshell UI.*
