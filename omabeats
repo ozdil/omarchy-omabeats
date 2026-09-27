@@ -1,0 +1,103 @@
+#!/bin/bash -p
+set -euo pipefail
+
+# Immediate rejection of dynamic loader injection
+if [ -n "${LD_PRELOAD:-}" ] || [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    echo "Security Error: Prohibited loader control variable detected" >&2
+    exit 1
+fi
+
+# Re-exec through fixed trusted shell under sanitized environment (/usr/bin/env -i)
+if [ "${OMABEATS_SECURE_ENV:-0}" != "1" ]; then
+    exec /usr/bin/env -i \
+        PATH="/usr/bin:/bin:${HOME}/.local/bin:${HOME}/.cargo/bin" \
+        HOME="${HOME}" \
+        USER="${USER:-$(/usr/bin/id -un 2>/dev/null || echo "user")}" \
+        LANG="${LANG:-C.UTF-8}" \
+        LC_ALL="${LC_ALL:-C.UTF-8}" \
+        DISPLAY="${DISPLAY:-}" \
+        WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(/usr/bin/id -u 2>/dev/null || echo 1000)}" \
+        XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}" \
+        XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}" \
+        OMABEATS_SECURE_ENV=1 \
+        /bin/bash -p "$0" "$@"
+fi
+
+# Reject unexpected build/loader controls
+for var in LD_PRELOAD LD_LIBRARY_PATH RUSTC_WRAPPER CARGO_BUILD_RUSTC_WRAPPER RUSTFLAGS BASH_ENV ENV; do
+    if [ -n "${!var+x}" ]; then
+        echo "Security Error: Prohibited control variable detected: ${var}" >&2
+        exit 1
+    fi
+done
+
+DIR="$(cd "$(/usr/bin/dirname "$(/usr/bin/realpath "${BASH_SOURCE[0]}")")" && /usr/bin/pwd)"
+
+# Resolve engine binary
+ENGINE=""
+if [[ -x "${DIR}/omabeats-engine" ]]; then
+    ENGINE="${DIR}/omabeats-engine"
+elif [[ -x "${DIR}/target/release/omabeats-engine" ]]; then
+    ENGINE="${DIR}/target/release/omabeats-engine"
+elif [[ -x "${HOME}/.local/bin/omabeats-engine" ]]; then
+    ENGINE="${HOME}/.local/bin/omabeats-engine"
+elif [[ -x "${HOME}/.config/omarchy/plugins/ozdil.omabeats/omabeats-engine" ]]; then
+    ENGINE="${HOME}/.config/omarchy/plugins/ozdil.omabeats/omabeats-engine"
+elif [[ -x /usr/bin/omabeats-engine ]]; then
+    ENGINE="/usr/bin/omabeats-engine"
+fi
+
+# If CLI arguments are provided, forward directly to the engine
+if [[ $# -gt 0 ]]; then
+    if [[ -n "${ENGINE}" ]]; then
+        exec "${ENGINE}" "$@"
+    else
+        echo "Hata: omabeats-engine ikili dosyasi bulunamadi." >&2
+        exit 1
+    fi
+fi
+
+# No arguments provided: Launch Standalone Studio Dashboard Window
+QUICKSHELL_BIN=""
+if [[ -x /usr/bin/quickshell ]]; then
+    QUICKSHELL_BIN="/usr/bin/quickshell"
+elif [[ -x /usr/local/bin/quickshell ]]; then
+    QUICKSHELL_BIN="/usr/local/bin/quickshell"
+elif [[ -x "${HOME}/.local/bin/quickshell" ]]; then
+    QUICKSHELL_BIN="${HOME}/.local/bin/quickshell"
+fi
+
+# Locate shell.qml
+SHELL_QML=""
+for cand in \
+    "${DIR}/qml/shell.qml" \
+    "${HOME}/.config/omarchy/plugins/ozdil.omabeats/qml/shell.qml" \
+    "/usr/share/omarchy/plugins/ozdil.omabeats/qml/shell.qml"; do
+    if [[ -f "${cand}" ]]; then
+        SHELL_QML="${cand}"
+        break
+    fi
+done
+
+if [[ -n "${QUICKSHELL_BIN}" && -n "${SHELL_QML}" ]]; then
+    # First attempt: toggle via Quickshell IPC if bar is hosting it
+    if "${QUICKSHELL_BIN}" ipc -p /usr/share/omarchy/shell call ozdil.omabeats toggle >/dev/null 2>&1; then
+        exit 0
+    fi
+    # Second attempt: toggle via active standalone shell IPC
+    if "${QUICKSHELL_BIN}" ipc -p "${SHELL_QML}" call ozdil.omabeats toggle >/dev/null 2>&1; then
+        exit 0
+    fi
+
+    # Launch standalone window on desktop
+    exec "${QUICKSHELL_BIN}" -p "${SHELL_QML}"
+fi
+
+# Fallback to status if GUI cannot be launched
+if [[ -n "${ENGINE}" ]]; then
+    exec "${ENGINE}" status
+else
+    echo "Hata: omabeats GUI veya motoru calistirilamadi." >&2
+    exit 1
+fi

@@ -88,17 +88,56 @@ KOMUTLAR:
     );
 }
 
+fn cmd_dashboard() {
+    let mut cmd = std::process::Command::new("/usr/bin/quickshell");
+    if !Path::new("/usr/bin/quickshell").exists() {
+        cmd = std::process::Command::new("quickshell");
+    }
+
+    let candidate_paths = [
+        "/home/ozdil/.config/omarchy/plugins/ozdil.omabeats/qml/shell.qml",
+        "/home/ozdil/Projects/omarchy/omarchy-omabeats/qml/shell.qml",
+        "/usr/share/omarchy/plugins/ozdil.omabeats/qml/shell.qml",
+    ];
+
+    if let Some(&path) = candidate_paths.iter().find(|p| Path::new(p).exists()) {
+        cmd.process_group(0);
+        cmd.args(["-p", path]);
+        if let Ok(mut child) = cmd.spawn() {
+            let _ = child.wait();
+            return;
+        }
+    }
+
+    cmd_status();
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        print_usage();
-        std::process::exit(1);
+        if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
+            cmd_dashboard();
+            return;
+        } else {
+            print_usage();
+            std::process::exit(0);
+        }
     }
 
     let command = args[1].to_lowercase();
 
     if command == "daemon" {
         cmd_daemon();
+        return;
+    }
+
+    if command == "dashboard" || command == "gui" || command == "app" {
+        cmd_dashboard();
+        return;
+    }
+
+    if command == "--help" || command == "-h" || command == "help" {
+        print_usage();
         return;
     }
 
@@ -110,6 +149,7 @@ fn main() {
     }
 
     match command.as_str() {
+        "dashboard" | "gui" | "app" => cmd_dashboard(),
         "status" => cmd_status(),
         "sync" => cmd_sync(),
         "anc" => {
@@ -726,6 +766,14 @@ fn cmd_daemon() {
     thread::spawn(move || {
         for stream in listener.incoming() {
             if let Ok(mut s) = stream {
+                // Enforce Zero-Trust peer credential verification (SO_PEERCRED)
+                if let Err(e) = security::verify_socket_peer_credentials(&s) {
+                    eprintln!("OmaBeats Daemon Security Warning: {}", e);
+                    let _ = s.write_all(b"{\"error\":\"Zero-Trust Access Denied: Unauthorized peer UID\"}\n");
+                    let _ = s.shutdown(std::net::Shutdown::Both);
+                    continue;
+                }
+
                 let Ok(cloned) = s.try_clone() else {
                     continue;
                 };

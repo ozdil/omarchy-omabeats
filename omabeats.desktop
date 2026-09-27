@@ -1,11 +1,12 @@
 [Desktop Entry]
 Name=OmaBeats
-GenericName=Beats Headphones Manager
-Comment=Apple Beats headphones control hub and battery monitor for Omarchy Linux
-Exec=/home/ozdil/Projects/omarchy/omarchy-omabeats/omabeats-dashboard
+GenericName=Beats Audio Studio & Headphones Hub
+Comment=Apple Beats headphones control hub, studio equalizer, and battery monitor for Omarchy Linux
+Exec=omabeats %u
 Icon=audio-headphones
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Settings;HardwareSettings;
-Keywords=beats;headphones;earbuds;anc;airpods;bluetooth;
+Keywords=beats;headphones;earbuds;anc;spatial;transparency;bluetooth;equalizer;apple;
 StartupNotify=true
+StartupWMClass=omabeats
