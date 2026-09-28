@@ -725,7 +725,7 @@ Panel {
           }
 
           PanelSectionHeader {
-            text: "KABLOLU BEATS PROFILI"
+            text: "WIRED BEATS PROFILE"
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
