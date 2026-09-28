@@ -6,11 +6,13 @@ mod mock;
 mod models;
 mod mpris;
 mod security;
+mod spatial;
 mod state;
 mod transparency;
 mod wired;
 
 use aap::{AncMode, MicMode};
+use spatial::SpatialMode;
 use bluez::{connect_device, detect_active_codec, disconnect_device, discover_beats_devices};
 use l2cap::L2capConnection;
 use mock::{apply_param_mutation, create_mock_state, load_state, save_state};
@@ -61,7 +63,7 @@ fn try_send_daemon_command(cmd_line: &str) -> Option<String> {
 
 fn print_usage() {
     eprintln!(
-        r#"OmaBeats Engine v1.0.0 - Omarchy Linux Beats Kulaklik Yonetim Motoru
+        r#"OmaBeats Engine v1.1.0 - Omarchy Linux Beats Kulaklik Yonetim Motoru
 
 KULLANIM:
     omabeats-engine <KOMUT> [ARGUMANLAR...]
@@ -74,6 +76,7 @@ KOMUTLAR:
     wired <MODEL|reset>         Kablolu Beats modelini secer (ornek: beats_ep, beats_pro, reset)
     anc <MOD>                   ANC modunu ayarlar (off | noise | transparency | adaptive)
     mic <MOD>                   Mikrofon yonlendirmesini ayarlar (auto | left | right)
+    spatial <MOD>               Uzamsal ses modunu secer (cinema | music | off)
     eq <PROFIL>                 Ekolayzer profilini secer (Beats Signature | Bass Boost | Vocal Clarity | Flat)
     volume <0-100>              Ses yuksekligini ayarlar
     auto-pause <true|false>     Kulak ici otomatik duraklatmayi etkinlestirir / kapatir
@@ -165,6 +168,13 @@ fn main() {
                 std::process::exit(1);
             }
             cmd_set_mic(&args[2]);
+        }
+        "spatial" => {
+            if args.len() < 3 {
+                eprintln!("Hata: Spatial modu belirtilmedi (cinema, music, off).");
+                std::process::exit(1);
+            }
+            cmd_set_spatial(&args[2]);
         }
         "eq" => {
             if args.len() < 3 {
@@ -549,6 +559,26 @@ fn cmd_set_mic(mode_str: &str) {
     println!("{{\"success\":true,\"mic_mode\":\"{}\"}}", mode.as_str());
 }
 
+fn cmd_set_spatial(mode_str: &str) {
+    let mode = match SpatialMode::from_str_name(mode_str) {
+        Some(m) => m,
+        None => {
+            eprintln!("Gecersiz spatial modu: {}. Gecerli modlar: cinema, music, off", mode_str);
+            std::process::exit(1);
+        }
+    };
+
+    let mut state = load_state().unwrap_or_default();
+    state.spatial_audio_mode = mode.as_str().to_string();
+
+    let mac = if !state.mac.is_empty() { Some(state.mac.as_str()) } else { None };
+    let success = spatial::apply_spatial_mode(mode, mac);
+
+    state.volume = get_system_volume();
+    let _ = save_state(&state);
+    println!("{{\"success\":{},\"spatial_audio_mode\":\"{}\",\"volume\":{}}}", success, mode.as_str(), state.volume);
+}
+
 fn cmd_set_eq(profile: &str) {
     let mut state = load_state().unwrap_or_default();
     state.eq_profile = profile.to_string();
@@ -850,12 +880,44 @@ fn cmd_daemon() {
                                 "{\"success\":false,\"error\":\"Missing ANC mode\"}".to_string()
                             }
                         }
+                        "spatial" => {
+                            if parts.len() >= 2 {
+                                if let Some(m) = SpatialMode::from_str_name(parts[1]) {
+                                    let mut state = load_state().unwrap_or_default();
+                                    state.spatial_audio_mode = m.as_str().to_string();
+                                    let mac_guard = mac_for_socket.lock().unwrap();
+                                    let mac_opt = if !mac_guard.is_empty() {
+                                        Some(mac_guard.as_str())
+                                    } else if !state.mac.is_empty() {
+                                        Some(state.mac.as_str())
+                                    } else {
+                                        None
+                                    };
+                                    let ok = spatial::apply_spatial_mode(m, mac_opt);
+                                    let _ = save_state(&state);
+                                    format!("{{\"success\":{},\"spatial_audio_mode\":\"{}\"}}", ok, m.as_str())
+                                } else {
+                                    format!("{{\"success\":false,\"error\":\"Invalid spatial mode {}\"}}", parts[1])
+                                }
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing spatial mode\"}".to_string()
+                            }
+                        }
                         "eq" => {
                             let mut state = load_state().unwrap_or_default();
-                            state.eq_profile = "Flat".to_string();
+                            let prof = if parts.len() >= 2 { parts[1..].join(" ") } else { "Flat".to_string() };
+                            state.eq_profile = prof.clone();
+                            let mac_guard = mac_for_socket.lock().unwrap();
+                            let mac_opt = if !mac_guard.is_empty() {
+                                Some(mac_guard.as_str())
+                            } else if !state.mac.is_empty() {
+                                Some(state.mac.as_str())
+                            } else {
+                                None
+                            };
+                            let ok = equalizer::apply_profile(&prof, mac_opt);
                             let _ = save_state(&state);
-                            equalizer::stop_equalizer();
-                            "{\"success\":true,\"eq_profile\":\"Flat\"}".to_string()
+                            format!("{{\"success\":{},\"eq_profile\":\"{}\"}}", ok, prof)
                         }
                         "volume" => {
                             if parts.len() >= 2 {
@@ -982,6 +1044,26 @@ fn cmd_daemon() {
                         "models" => {
                             let list = models::get_known_beats_models();
                             serde_json::to_string(&list).unwrap_or_default()
+                        }
+                        "mock" => {
+                            let model = if parts.len() >= 2 { parts[1] } else { "beats_fit_pro" };
+                            let mock_state = create_mock_state(model);
+                            let _ = save_state(&mock_state);
+                            serde_json::to_string(&mock_state).unwrap_or_default()
+                        }
+                        "set" => {
+                            if parts.len() >= 3 {
+                                let mut state = load_state().unwrap_or_default();
+                                match apply_param_mutation(&mut state, parts[1], parts[2]) {
+                                    Ok(()) => {
+                                        let _ = save_state(&state);
+                                        serde_json::to_string(&state).unwrap_or_default()
+                                    }
+                                    Err(e) => format!("{{\"success\":false,\"error\":\"{}\"}}", e),
+                                }
+                            } else {
+                                "{\"success\":false,\"error\":\"Missing set arguments\"}".to_string()
+                            }
                         }
                         _ => "{\"error\":\"Unknown daemon command\"}".to_string(),
                     };
@@ -1157,6 +1239,7 @@ fn cmd_daemon() {
                         let _ = save_state(&state);
                         transparency::disable_ambient_passthrough();
                         equalizer::stop_equalizer();
+                        spatial::stop_spatial();
                         cached_dev = None;
                         thread::sleep(Duration::from_millis(1000));
                     }
@@ -1180,6 +1263,7 @@ fn cmd_daemon() {
                 let _ = save_state(&state);
                 transparency::disable_ambient_passthrough();
                 equalizer::stop_equalizer();
+                spatial::stop_spatial();
             }
 
             // USB-C Beats Detection (Beats Studio Pro, Beats Solo 4, Beats Pill 2024 Lossless Mode)

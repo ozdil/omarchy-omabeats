@@ -52,6 +52,7 @@ pub fn create_mock_state(model_id_or_name: &str) -> BeatsState {
         paused_by_auto_pause: false,
         conversational_awareness: false,
         eq_profile: "Flat".to_string(),
+        spatial_audio_mode: "off".to_string(),
         chime_active: None,
         volume: 65,
         muted: false,
@@ -150,6 +151,9 @@ pub fn apply_param_mutation(state: &mut BeatsState, key: &str, value: &str) -> R
         }
         "eq" | "eq_profile" => {
             state.eq_profile = value.to_string();
+        }
+        "spatial" | "spatial_audio" | "spatial_mode" => {
+            state.spatial_audio_mode = value.to_string();
         }
         "chime" => {
             if value == "none" || value == "off" || value.is_empty() {

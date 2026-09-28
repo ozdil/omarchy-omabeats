@@ -35,6 +35,7 @@ Rectangle {
     property string micMode: "Auto"
     property bool autoPauseEnabled: true
     property string eqProfile: "Beats Signature"
+    property string spatialAudioMode: "off"
     property string codec: "AAC"
     property int rssi: -54
     property string mac: "04:9D:05:DD:08:62"
@@ -65,6 +66,7 @@ Rectangle {
             if (data.anc_mode) root.ancMode = data.anc_mode;
             if (data.mic_mode) root.micMode = data.mic_mode;
             if (data.eq_profile) root.eqProfile = data.eq_profile;
+            if (data.spatial_audio_mode) root.spatialAudioMode = data.spatial_audio_mode;
             root.autoPauseEnabled = (data.auto_pause_enabled !== false);
 
             root.batteryLeft = data.battery_left !== undefined ? data.battery_left : -1;
@@ -311,6 +313,15 @@ Rectangle {
             autoPauseEnabled: root.autoPauseEnabled
             onAutoPauseToggled: function(enabled) {
                 root.runEngineCommand(["set", "auto_pause", enabled ? "true" : "false"]);
+            }
+        }
+
+        // Spatial Audio
+        SpatialAudioSelector {
+            Layout.fillWidth: true
+            currentMode: root.spatialAudioMode
+            onModeSelected: function(m) {
+                root.runEngineCommand(["spatial", m]);
             }
         }
 

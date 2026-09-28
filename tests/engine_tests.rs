@@ -203,3 +203,19 @@ fn test_future_proof_beats_discovery() {
     assert_eq!(future_speaker.model_id, "beats_future_device");
     assert_eq!(future_speaker.form_factor, FormFactor::Speaker);
 }
+
+#[test]
+fn test_mock_spatial_mode_mutation() {
+    let mut state = mock::create_mock_state("beats_fit_pro");
+    assert_eq!(state.spatial_audio_mode, "off");
+
+    assert!(mock::apply_param_mutation(&mut state, "spatial", "cinema").is_ok());
+    assert_eq!(state.spatial_audio_mode, "cinema");
+
+    assert!(mock::apply_param_mutation(&mut state, "spatial_audio", "music").is_ok());
+    assert_eq!(state.spatial_audio_mode, "music");
+
+    assert!(mock::apply_param_mutation(&mut state, "spatial_mode", "off").is_ok());
+    assert_eq!(state.spatial_audio_mode, "off");
+}
+

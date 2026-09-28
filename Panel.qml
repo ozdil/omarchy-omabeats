@@ -48,6 +48,8 @@ Panel {
   property string micMode: "Auto"
   property bool autoPauseEnabled: true
   property string codec: "AAC"
+  property string spatialMode: "off"
+  property string eqProfile: "Flat"
   property int rssi: -60
   property string mac: "04:9D:05:DD:08:62"
 
@@ -122,6 +124,8 @@ Panel {
             root.noiseLevel = (mLower.indexOf("noise") !== -1 || mLower.indexOf("anc") !== -1) ? 0 : (mLower.indexOf("off") !== -1 ? 50 : 100)
           }
           if (d.codec) root.codec = String(d.codec)
+          if (d.spatial_audio_mode) root.spatialMode = String(d.spatial_audio_mode)
+          if (d.eq_profile) root.eqProfile = String(d.eq_profile)
           if (d.rssi !== undefined) root.rssi = Number(d.rssi)
           if (d.mac) root.mac = String(d.mac)
           if (d.auto_pause_enabled !== undefined) root.autoPauseEnabled = !!d.auto_pause_enabled
@@ -652,7 +656,93 @@ Panel {
             }
           }
 
-          // 5. In-Ear Detection & Auto-Pause Toggle
+          // 5. Spatial Audio (Uzamsal Ses / Dolby Atmos & Apple Spatial Stage)
+          PanelSeparator {
+            foreground: root.foreground
+          }
+
+          PanelSectionHeader {
+            text: "SPATIAL AUDIO (UZAMSAL SES)"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            readonly property var spatialPresets: [
+              { label: "Off", id: "off", icon: "󰝟" },
+              { label: "Cinema Dolby", id: "cinema", icon: "󰿎" },
+              { label: "Music Stage", id: "music", icon: "󰎆" }
+            ]
+
+            Repeater {
+              model: parent.spatialPresets
+
+              delegate: Button {
+                required property var modelData
+                width: Math.floor((parent.width - 2 * Style.space(6)) / 3)
+                text: modelData.label
+                iconText: modelData.icon
+                bordered: true
+                horizontalPadding: Style.space(4)
+                selected: root.spatialMode === modelData.id
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.spatialMode = modelData.id
+                  root.runEngineCommand(["spatial", modelData.id])
+                }
+              }
+            }
+          }
+
+          // 6. Equalizer Profiles (EQ)
+          PanelSeparator {
+            foreground: root.foreground
+          }
+
+          PanelSectionHeader {
+            text: "EQUALIZER PROFILES"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.space(6)
+
+            readonly property var eqPresets: [
+              { label: "Beats Signature", id: "Beats Signature" },
+              { label: "Bass Boost", id: "Bass Boost" },
+              { label: "Vocal Clarity", id: "Vocal Clarity" },
+              { label: "Flat", id: "Flat" }
+            ]
+
+            Repeater {
+              model: parent.eqPresets
+
+              delegate: Button {
+                required property var modelData
+                text: modelData.label
+                bordered: true
+                selected: root.eqProfile === modelData.id
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.eqProfile = modelData.id
+                  root.runEngineCommand(["eq", modelData.id])
+                }
+              }
+            }
+          }
+
+          // 7. In-Ear Detection & Auto-Pause Toggle
           PanelSeparator {
             foreground: root.foreground
             visible: root.hasInEar

@@ -37,6 +37,8 @@ pub struct BeatsState {
     pub paused_by_auto_pause: bool,
     pub conversational_awareness: bool,
     pub eq_profile: String,
+    #[serde(default = "default_spatial_mode")]
+    pub spatial_audio_mode: String,
     pub chime_active: Option<String>,
     pub volume: i32,
     pub muted: bool,
@@ -76,6 +78,7 @@ impl Default for BeatsState {
             paused_by_auto_pause: false,
             conversational_awareness: false,
             eq_profile: "Flat".to_string(),
+            spatial_audio_mode: "off".to_string(),
             chime_active: None,
             volume: 60,
             muted: false,
@@ -84,6 +87,10 @@ impl Default for BeatsState {
             last_updated: 0,
         }
     }
+}
+
+fn default_spatial_mode() -> String {
+    "off".to_string()
 }
 
 pub fn get_state_file_path() -> PathBuf {

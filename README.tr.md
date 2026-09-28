@@ -129,6 +129,11 @@ omabeats anc transparency   # Şeffaf Mod
 omabeats anc adaptive       # Adaptif Mod
 omabeats anc off            # Kapalı
 
+# Uzamsal Ses / Spatial Audio (Sinema Dolby Çevreleyen Ses / Müzik Sahnesi)
+omabeats spatial cinema
+omabeats spatial music
+omabeats spatial off
+
 # DSP Ekolayzer Profilleri
 omabeats eq "Beats Signature"
 omabeats eq "Bass Boost"

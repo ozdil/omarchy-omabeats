@@ -133,6 +133,11 @@ omabeats anc transparency   # Transparency Passthrough
 omabeats anc adaptive       # Adaptive Noise Control
 omabeats anc off            # Passive mode
 
+# Spatial Audio (Cinema Dolby Virtual Surround / Music Stage)
+omabeats spatial cinema
+omabeats spatial music
+omabeats spatial off
+
 # DSP Equalizer Profiles
 omabeats eq "Beats Signature"
 omabeats eq "Bass Boost"
