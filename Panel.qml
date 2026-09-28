@@ -170,10 +170,10 @@ Panel {
     fontFamily: root.fontFamily
     foreground: bar ? bar.foreground : root.foreground
     tooltipText: root.isBothCharging
-                 ? ("OmaBeats: " + root.modelName + " (Kutuda Sarj Oluyor)")
+                 ? ("OmaBeats: " + root.modelName + " (Charging in Case)")
                  : (root.connected
-                    ? ("OmaBeats: " + root.modelName + (root.isWired ? " (Kablolu)" : (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Bagli)")))
-                    : "OmaBeats: Bagli Degil")
+                    ? ("OmaBeats: " + root.modelName + (root.isWired ? " (Wired)" : (root.batteryLeft >= 0 ? (" (" + root.batteryLeft + "%)") : " (Connected)")))
+                    : "OmaBeats: Disconnected")
     onPressed: function(b) {
       if (root.opened) root.close()
       else root.open()
@@ -223,10 +223,10 @@ Panel {
               width: parent.width
               title: root.modelName
               meta: root.isBothCharging
-                    ? "KUTUDA SARJ OLUYOR · BEKLEMEDE"
+                    ? "CHARGING IN CASE · STANDBY"
                     : (root.connected
-                       ? ((root.isWired ? "KABLOLU · " : "BAGLI · ") + root.codec + (!root.isWired && root.rssi !== 0 ? (" · " + root.rssi + " dBm") : ""))
-                       : "BAGLANTI YOK")
+                       ? ((root.isWired ? "WIRED · " : "CONNECTED · ") + root.codec + (!root.isWired && root.rssi !== 0 ? (" · " + root.rssi + " dBm") : ""))
+                       : "NOT CONNECTED")
               foreground: root.foreground
               fontFamily: root.fontFamily
               iconComponent: Component {
@@ -292,7 +292,7 @@ Panel {
               }
 
               Text {
-                text: root.connectionType !== "" ? root.connectionType : "Kablolu Baglanti (Kesintisiz Guc)"
+                text: root.connectionType !== "" ? root.connectionType : "Wired Connection (Continuous Power)"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

@@ -194,7 +194,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: root.connected ? ("Bagli (" + root.rssi + " dBm)") : "Baglanti Yok"
+                        text: root.connected ? ("Connected (" + root.rssi + " dBm)") : "Not Connected"
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
                         color: root.connected ? Theme.accentGreen : Theme.textDim
@@ -211,7 +211,7 @@ Rectangle {
 
                     Text {
                         anchors.centerIn: parent
-                        text: root.connected ? "Baglantiyi Kes" : "Baglan"
+                        text: root.connected ? "Disconnect" : "Connect"
                         font.family: Theme.fontFamily
                         font.pixelSize: 9
                         font.weight: Font.Bold
@@ -411,7 +411,7 @@ Rectangle {
                         color: Theme.accentBlue
                     }
                     Text {
-                        text: "Yenile"
+                        text: "Refresh"
                         font.family: Theme.fontFamily
                         font.pixelSize: 10
                         color: Theme.textMain
