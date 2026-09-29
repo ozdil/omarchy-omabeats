@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "ozdil.omabeats",
   "name": "OmaBeats",
-  "version": "1.1.0",
-  "author": "Ozan Özdil (ozdil)",
+  "version": "1.2.0",
+  "author": "Ozan \u00d6zdil (ozdil)",
   "license": "MIT",
   "description": "Comprehensive Apple Beats headphones control, battery monitor, and ANC manager for Omarchy Linux",
   "kinds": [

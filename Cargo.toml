@@ -1,6 +1,6 @@
 [package]
 name = "omabeats-engine"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["Ozan Özdil <ozan@pm.me>"]
 description = "Comprehensive Apple Beats headphones control and battery monitor engine for Omarchy Linux"
