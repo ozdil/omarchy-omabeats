@@ -1,4 +1,5 @@
 # OmaBeats
+[![Omarchy Verified Plugin](https://img.shields.io/badge/Omarchy-Verified_Plugin-22c55e?style=for-the-badge&logo=omarchy)](https://github.com/ozdil)
 
 **Omarchy Linux Resmi Beats Audio Stüdyosu ve Çekirdek Sistem Uygulaması**
 
