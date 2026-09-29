@@ -16,7 +16,8 @@ Panel {
   implicitHeight: button.implicitHeight
 
   // Beats Headphone Hardware State
-  property bool connected: true
+  property bool connected: false
+  property bool showAboutModal: false
   property string modelName: "Beats Fit Pro"
   property string modelId: "beats_fit_pro"
   property string formFactor: "Earbuds"
@@ -31,9 +32,9 @@ Panel {
   property string wiredModel: ""
   readonly property bool isBothCharging: (root.chargingLeft && root.chargingRight && !root.inEarLeft && !root.inEarRight)
 
-  property int batteryLeft: 95
+  property int batteryLeft: -1
   property bool chargingLeft: false
-  property int batteryRight: 93
+  property int batteryRight: -1
   property bool chargingRight: false
   property int batteryCase: -1
   property bool chargingCase: false
@@ -133,7 +134,7 @@ Panel {
           root.connectionType = String(d.connection_type || "")
           root.wiredModel = String(d.wired_model || "")
 
-          if (!root.connected || root.isBothCharging) {
+          if (root.isBothCharging) {
             if (root.opened) root.close()
           }
         } catch (e) {
@@ -198,8 +199,27 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.showAboutModal) {
+          root.showAboutModal = false
+        } else {
+          root.close()
+        }
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "r" || t === "R") {
+          root.refresh()
+        } else if (t === "a" || t === "A") {
+          root.showAboutModal = !root.showAboutModal
+        } else if (t === "1") {
+          root.setNoiseControl("anc")
+        } else if (t === "2") {
+          root.setNoiseControl("off")
+        } else if (t === "3") {
+          root.setNoiseControl("transparency")
+        }
+      }
 
       Flickable {
         id: panelFlick
@@ -868,7 +888,20 @@ Panel {
             Row {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
+              spacing: Style.space(8)
+
+              Button {
+                iconText: "󰋽"
+                tooltipText: "About & Imprint"
+                bordered: true
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.showAboutModal = !root.showAboutModal
+                }
+              }
 
               Text {
                 text: "MAC: " + root.mac
@@ -892,6 +925,89 @@ Panel {
               fontSize: Style.font.caption
               onClicked: root.refresh()
             }
+          }
+        }
+      }
+
+      // About & Imprint Modal Overlay
+      Rectangle {
+        id: aboutOverlay
+        anchors.fill: parent
+        visible: root.showAboutModal
+        color: Qt.rgba(0.05, 0.05, 0.07, 0.96)
+        z: 99
+
+        MouseArea {
+          anchors.fill: parent
+          // Block underlying clicks
+        }
+
+        Column {
+          anchors.centerIn: parent
+          width: parent.width - Style.space(40)
+          spacing: Style.space(12)
+
+          Row {
+            width: parent.width
+            Item {
+              width: parent.width - closeAboutBtn.implicitWidth
+              implicitHeight: aboutTitleText.implicitHeight
+              Text {
+                id: aboutTitleText
+                text: "OmaBeats"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+              }
+            }
+
+            Button {
+              id: closeAboutBtn
+              text: "✕"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              onClicked: root.showAboutModal = false
+            }
+          }
+
+          Text {
+            text: "Version: 1.1.0\nDeveloper: Ozan Ozdil (@ozdil)\nLicense: MIT\nApple Beats & W1/H1 Hardware Management Module"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            lineHeight: 1.3
+          }
+
+          PanelSeparator {
+            width: parent.width
+            foreground: root.foreground
+          }
+
+          Button {
+            width: parent.width
+            text: "GitHub / Contact"
+            iconText: "󰊤"
+            bordered: true
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: Qt.openUrlExternally("https://github.com/ozdil")
+          }
+
+          Button {
+            width: parent.width
+            text: "Buy Me a Coffee"
+            iconText: "󰅖"
+            bordered: true
+            foreground: "#000000"
+            color: "#FFDD00"
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: Qt.openUrlExternally("https://buymeacoffee.com/ozdil")
           }
         }
       }

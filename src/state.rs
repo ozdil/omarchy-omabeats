@@ -51,7 +51,7 @@ impl Default for BeatsState {
     fn default() -> Self {
         let model = crate::models::match_model("Beats Fit Pro", "bluetooth:v004Cp2012dD408");
         BeatsState {
-            connected: true,
+            connected: false,
             test_mode: false,
             mac: "04:9D:05:DD:08:62".to_string(),
             model,
@@ -59,13 +59,13 @@ impl Default for BeatsState {
             is_wired: false,
             wired_model: None,
             codec: "AAC".to_string(),
-            rssi: -58,
-            battery_left: 85,
+            rssi: 0,
+            battery_left: -1,
             charging_left: false,
-            battery_right: 80,
+            battery_right: -1,
             charging_right: false,
-            battery_case: 95,
-            charging_case: true,
+            battery_case: -1,
+            charging_case: false,
             battery_single: -1,
             charging_single: false,
             in_ear_left: true,

@@ -429,29 +429,25 @@ fn perform_sync() -> BeatsState {
             state.volume = get_system_volume();
         } else {
             // Device paired in BlueZ but not currently connected
-            if !state.test_mode {
-                state.connected = false;
-                state.mac = dev.mac.clone();
-                state.model = dev.model.clone();
-                state.battery_left = -1;
-                state.battery_right = -1;
-                if state.battery_case <= 0 {
-                    state.battery_case = -1;
-                }
-                state.charging_case = false;
-                state.battery_single = -1;
-            }
-        }
-    } else {
-        // No Beats devices found in BlueZ
-        if !state.test_mode {
             state.connected = false;
+            state.test_mode = false;
+            state.mac = dev.mac.clone();
+            state.model = dev.model.clone();
             state.battery_left = -1;
             state.battery_right = -1;
             state.battery_case = -1;
             state.charging_case = false;
             state.battery_single = -1;
         }
+    } else {
+        // No Beats devices found in BlueZ
+        state.connected = false;
+        state.test_mode = false;
+        state.battery_left = -1;
+        state.battery_right = -1;
+        state.battery_case = -1;
+        state.charging_case = false;
+        state.battery_single = -1;
     }
 
     // Check for USB Lossless Beats Device or active wired selection if not connected via Bluetooth
